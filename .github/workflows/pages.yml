@@ -21,8 +21,11 @@ permissions:
   id-token: write
 
 concurrency:
+  # Queue deploys rather than cancelling them. Two branches currently trigger
+  # this workflow, and cancel-in-progress killed the run that would have
+  # published when they were pushed a second apart.
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   verify:
