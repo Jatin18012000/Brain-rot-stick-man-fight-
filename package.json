@@ -1,0 +1,16 @@
+{
+  "name": "stickman-tower",
+  "version": "1.0.0",
+  "description": "A 100-floor stickman fighting game. Touch, keyboard and controller. Installs as an app, runs offline.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "build": "node tools/build-standalone.mjs",
+    "check": "node tools/check-combos.mjs",
+    "balance": "node tools/balance.mjs",
+    "icons": "python3 tools/make-icons.py",
+    "verify": "node tools/check-combos.mjs && node tools/balance.mjs"
+  },
+  "license": "MIT"
+}

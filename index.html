@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stickman Tower — 100 Floor Fighter</title>
+<!-- viewport-fit=cover is what makes env(safe-area-inset-*) work on iPhone -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="description" content="Climb 100 floors, beat the boss of each one, spend your winnings on gear and training. A stickman fighting game with touch, keyboard and controller support.">
+<meta name="theme-color" content="#05060a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Stickman Tower">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="game"></canvas>
+
+    <div id="touch" class="touch hidden">
+      <div class="pad">
+        <button class="pb up" data-action="up" data-pad="14"><span>▲</span><i>JUMP</i></button>
+        <button class="pb left" data-action="left" data-slide="true" data-pad="14"><span>◀</span></button>
+        <button class="pb right" data-action="right" data-slide="true" data-pad="14"><span>▶</span></button>
+        <button class="pb down" data-action="down" data-pad="14"><span>▼</span><i>CROUCH</i></button>
+      </div>
+
+      <div class="atk">
+        <button class="ab p2" data-action="p2" data-pad="12"><span>P2</span><i>PUNCH</i></button>
+        <button class="ab p1" data-action="p1" data-pad="12"><span>P1</span><i>PUNCH</i></button>
+        <button class="ab k" data-action="kick" data-pad="12"><span>K</span><i>KICK</i></button>
+        <button class="ab blk" data-action="block" data-pad="10"><span>⛨</span><i>BLOCK</i></button>
+      </div>
+
+      <button class="tonic" data-action="potion"><span>+</span><b class="badge">1</b></button>
+      <button class="pausebtn" data-action="pause">❚❚</button>
+    </div>
+
+    <div id="ui" class="ui"></div>
+    <div id="rotate"><div>↻<br>Turn your device sideways<br><small>landscape gives you the full arena</small></div></div>
+  </div>
+</div>
+
+<script src="src/util.js"></script>
+<script src="src/audio.js"></script>
+<script src="src/input.js"></script>
+<script src="src/moves.js"></script>
+<script src="src/floors.js"></script>
+<script src="src/progress.js"></script>
+<script src="src/fighter.js"></script>
+<script src="src/ai.js"></script>
+<script src="src/render.js"></script>
+<script src="src/hud.js"></script>
+<script src="src/ui.js"></script>
+<script src="src/game.js"></script>
+<script>
+(function () {
+  function boot() {
+    var canvas = document.getElementById('game');
+    var touch = document.getElementById('touch');
+    var ui = document.getElementById('ui');
+    ST.UI.init(ui, touch);
+    ST.Game.init(canvas, touch);
+    ST.UI.show('title');
+
+    // Audio can only start after a real gesture (iOS rule).
+    ['pointerdown', 'keydown'].forEach(function (evt) {
+      document.addEventListener(evt, function once() {
+        ST.Audio.unlock();
+        document.removeEventListener(evt, once);
+      });
+    });
+
+    // Stop iOS rubber-banding and double-tap zoom during a fight.
+    document.addEventListener('touchmove', function (e) {
+      if (ST.Game.screen === 'fight') e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+
+    if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+      navigator.serviceWorker.register('sw.js').catch(function () { /* offline install is optional */ });
+    }
+  }
+  if (document.readyState === 'complete' || document.readyState === 'interactive') boot();
+  else window.addEventListener('DOMContentLoaded', boot);
+})();
+</script>
+</body>
+</html>
