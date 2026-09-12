@@ -30,9 +30,9 @@ installs to the home screen and runs offline.
 **Publish it so your phone can reach it**
 
 The repository ships a GitHub Actions workflow that deploys the game to GitHub
-Pages. Enable it once under **Settings → Pages → Source: GitHub Actions**, and
-every push to `main` builds, verifies and publishes. The published URL is what
-you open in Safari to add it to your home screen:
+Pages, and turns Pages on by itself the first time it runs. Every push to
+`main` builds, verifies and publishes. The published URL is what you open in
+Safari to add it to your home screen:
 
 ```
 https://jatin18012000.github.io/Brain-rot-stick-man-fight-/
