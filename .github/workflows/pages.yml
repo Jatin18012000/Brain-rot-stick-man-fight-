@@ -4,12 +4,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    # The repository had no main branch when this was added, so the working
-    # branch below is currently the default. Once it is merged into main you
-    # can drop that second entry.
-    branches:
-      - main
-      - claude/practical-gates-c78v2e
+    branches: [main]
   workflow_dispatch:
 
 permissions:
