@@ -34,9 +34,11 @@ Pages. It needs Pages switched on once, by a repository admin:
 
 **Settings → Pages → Build and deployment → Source: GitHub Actions.**
 
-That is the only manual step, and only the repository owner can do it — a
-workflow token is not permitted to create the Pages site. After that, every
-push to `main` builds, verifies and publishes to:
+Only a repository admin can do this; a workflow token is not permitted to
+create the Pages site. Note that the `github-pages` environment GitHub creates
+alongside it only accepts deployments from the repository's **default branch**,
+so make sure Settings → General → Default branch is the branch you deploy from.
+After that, every push builds, verifies and publishes to:
 
 ```
 https://jatin18012000.github.io/Brain-rot-stick-man-fight-/

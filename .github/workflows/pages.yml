@@ -4,7 +4,15 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    # The github-pages environment only accepts deployments from the
+    # repository's DEFAULT branch. This repo's default is still the working
+    # branch (it was created empty), so a deploy from main is rejected before
+    # a runner is even assigned. Both branches are listed until the default is
+    # switched to main under Settings -> General, after which the second entry
+    # can be dropped.
+    branches:
+      - main
+      - claude/practical-gates-c78v2e
   workflow_dispatch:
 
 permissions:
