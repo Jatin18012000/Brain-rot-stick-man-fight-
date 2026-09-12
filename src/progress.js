@@ -12,13 +12,13 @@
 
   // ---------------------------------------------------------- stat training
   const TRAINING = [
-    { id: 'hp',   name: 'Vitality',   max: 60, base: 68,  ratio: 1.075, per: '+12 Max HP',       icon: '+' },
-    { id: 'atk',  name: 'Power',      max: 45, base: 90,  ratio: 1.09,  per: '+4% Attack',       icon: '!' },
-    { id: 'def',  name: 'Toughness',  max: 45, base: 85,  ratio: 1.09,  per: '+3 Defence',       icon: '#' },
-    { id: 'spd',  name: 'Agility',    max: 18, base: 275, ratio: 1.13,  per: '+4% Speed, faster recovery', icon: '>' },
-    { id: 'crit', name: 'Precision',  max: 20, base: 140, ratio: 1.12,  per: '+2% Critical chance', icon: '*' },
-    { id: 'rage', name: 'Focus',      max: 16, base: 200, ratio: 1.13,  per: '+8% Rage gain',    icon: '^' },
-    { id: 'pot',  name: 'Alchemy',    max: 4,  base: 320, ratio: 2.05,  per: '+1 Tonic per fight', icon: '~' },
+    { id: 'hp',   name: 'Vitality',   max: 60, base: 68,  ratio: 1.075, per: '+12 Max HP',       icon: 'HP' },
+    { id: 'atk',  name: 'Power',      max: 45, base: 90,  ratio: 1.09,  per: '+4% Attack',       icon: 'ATK' },
+    { id: 'def',  name: 'Toughness',  max: 45, base: 85,  ratio: 1.09,  per: '+3 Defence',       icon: 'DEF' },
+    { id: 'spd',  name: 'Agility',    max: 18, base: 275, ratio: 1.13,  per: '+4% Speed, faster recovery', icon: 'SPD' },
+    { id: 'crit', name: 'Precision',  max: 20, base: 140, ratio: 1.12,  per: '+2% Critical chance', icon: 'CRT' },
+    { id: 'rage', name: 'Focus',      max: 16, base: 200, ratio: 1.13,  per: '+8% Rage gain',    icon: 'RGE' },
+    { id: 'pot',  name: 'Alchemy',    max: 4,  base: 320, ratio: 2.05,  per: '+1 Tonic per fight', icon: 'TNC' },
   ];
   const TRAINING_BY_ID = {};
   TRAINING.forEach((t) => { TRAINING_BY_ID[t.id] = t; });
@@ -31,12 +31,12 @@
 
   // ------------------------------------------------------------- equipment
   const SLOTS = [
-    { id: 'weapon', name: 'Fists',  costMul: 1.30, icon: '✊' },
-    { id: 'armor',  name: 'Body',   costMul: 1.20, icon: '⛨' },
-    { id: 'head',   name: 'Head',   costMul: 1.00, icon: '⌂' },
-    { id: 'gloves', name: 'Hands',  costMul: 1.00, icon: '✋' },
-    { id: 'boots',  name: 'Feet',   costMul: 1.00, icon: '⇈' },
-    { id: 'charm',  name: 'Charm',  costMul: 1.10, icon: '✦' },
+    { id: 'weapon', name: 'Fists',  costMul: 1.30, icon: '01' },
+    { id: 'armor',  name: 'Body',   costMul: 1.20, icon: '02' },
+    { id: 'head',   name: 'Head',   costMul: 1.00, icon: '03' },
+    { id: 'gloves', name: 'Hands',  costMul: 1.00, icon: '04' },
+    { id: 'boots',  name: 'Feet',   costMul: 1.00, icon: '05' },
+    { id: 'charm',  name: 'Charm',  costMul: 1.10, icon: '06' },
   ];
 
   const TIER_FLOOR = [1, 8, 20, 32, 44, 58, 72, 86];

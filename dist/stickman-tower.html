@@ -263,6 +263,7 @@ button { font-family: inherit; cursor: pointer; }
 }
 .tab.on { background: var(--blue); color: #06121f; border-color: var(--blue); }
 .slot-block { margin-bottom: 18px; }
+.slot-block h3 { display: flex; align-items: center; gap: 8px; }
 .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .item {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px;
@@ -292,7 +293,10 @@ button { font-family: inherit; cursor: pointer; }
 .trains { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
 .train { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
 .tr-head { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.tr-icon { font-size: 16px; color: var(--gold); }
+.tr-icon {
+  font-size: 9px; font-weight: 900; letter-spacing: .08em; color: var(--gold);
+  border: 1px solid var(--gold); border-radius: 4px; padding: 2px 4px;
+}
 .tr-lvl { margin-left: auto; font-size: 11px; color: var(--dim); }
 .tr-per { font-size: 11px; color: var(--dim); min-height: 28px; }
 .pips { display: flex; gap: 2px; flex-wrap: wrap; }
@@ -983,7 +987,11 @@ button { font-family: inherit; cursor: pointer; }
 
   Input.bindingLabel = function (action) {
     const codes = Input.keys[action] || [];
-    return codes.map(prettyCode).join(' / ') || '—';
+    const seen = [];
+    codes.map(prettyCode).forEach((label) => {
+      if (label && seen.indexOf(label) === -1) seen.push(label);   // ShiftLeft/ShiftRight both read "SHIFT"
+    });
+    return seen.join(' / ') || '—';
   };
 
   function prettyCode(code) {
@@ -1488,13 +1496,13 @@ button { font-family: inherit; cursor: pointer; }
 
   // ---------------------------------------------------------- stat training
   const TRAINING = [
-    { id: 'hp',   name: 'Vitality',   max: 60, base: 68,  ratio: 1.075, per: '+12 Max HP',       icon: '+' },
-    { id: 'atk',  name: 'Power',      max: 45, base: 90,  ratio: 1.09,  per: '+4% Attack',       icon: '!' },
-    { id: 'def',  name: 'Toughness',  max: 45, base: 85,  ratio: 1.09,  per: '+3 Defence',       icon: '#' },
-    { id: 'spd',  name: 'Agility',    max: 18, base: 275, ratio: 1.13,  per: '+4% Speed, faster recovery', icon: '>' },
-    { id: 'crit', name: 'Precision',  max: 20, base: 140, ratio: 1.12,  per: '+2% Critical chance', icon: '*' },
-    { id: 'rage', name: 'Focus',      max: 16, base: 200, ratio: 1.13,  per: '+8% Rage gain',    icon: '^' },
-    { id: 'pot',  name: 'Alchemy',    max: 4,  base: 320, ratio: 2.05,  per: '+1 Tonic per fight', icon: '~' },
+    { id: 'hp',   name: 'Vitality',   max: 60, base: 68,  ratio: 1.075, per: '+12 Max HP',       icon: 'HP' },
+    { id: 'atk',  name: 'Power',      max: 45, base: 90,  ratio: 1.09,  per: '+4% Attack',       icon: 'ATK' },
+    { id: 'def',  name: 'Toughness',  max: 45, base: 85,  ratio: 1.09,  per: '+3 Defence',       icon: 'DEF' },
+    { id: 'spd',  name: 'Agility',    max: 18, base: 275, ratio: 1.13,  per: '+4% Speed, faster recovery', icon: 'SPD' },
+    { id: 'crit', name: 'Precision',  max: 20, base: 140, ratio: 1.12,  per: '+2% Critical chance', icon: 'CRT' },
+    { id: 'rage', name: 'Focus',      max: 16, base: 200, ratio: 1.13,  per: '+8% Rage gain',    icon: 'RGE' },
+    { id: 'pot',  name: 'Alchemy',    max: 4,  base: 320, ratio: 2.05,  per: '+1 Tonic per fight', icon: 'TNC' },
   ];
   const TRAINING_BY_ID = {};
   TRAINING.forEach((t) => { TRAINING_BY_ID[t.id] = t; });
@@ -1507,12 +1515,12 @@ button { font-family: inherit; cursor: pointer; }
 
   // ------------------------------------------------------------- equipment
   const SLOTS = [
-    { id: 'weapon', name: 'Fists',  costMul: 1.30, icon: '✊' },
-    { id: 'armor',  name: 'Body',   costMul: 1.20, icon: '⛨' },
-    { id: 'head',   name: 'Head',   costMul: 1.00, icon: '⌂' },
-    { id: 'gloves', name: 'Hands',  costMul: 1.00, icon: '✋' },
-    { id: 'boots',  name: 'Feet',   costMul: 1.00, icon: '⇈' },
-    { id: 'charm',  name: 'Charm',  costMul: 1.10, icon: '✦' },
+    { id: 'weapon', name: 'Fists',  costMul: 1.30, icon: '01' },
+    { id: 'armor',  name: 'Body',   costMul: 1.20, icon: '02' },
+    { id: 'head',   name: 'Head',   costMul: 1.00, icon: '03' },
+    { id: 'gloves', name: 'Hands',  costMul: 1.00, icon: '04' },
+    { id: 'boots',  name: 'Feet',   costMul: 1.00, icon: '05' },
+    { id: 'charm',  name: 'Charm',  costMul: 1.10, icon: '06' },
   ];
 
   const TIER_FLOOR = [1, 8, 20, 32, 44, 58, 72, 86];
@@ -3613,11 +3621,15 @@ button { font-family: inherit; cursor: pointer; }
     let rows = '';
     for (let f = 100; f >= 1; f--) {
       const info = Floors.get(f);
-      const cleared = f < d.highest;
-      const current = f === d.highest;
+      const cleared = f <= d.cleared;
+      const current = f === d.highest && !cleared;
       const locked = f > d.highest;
       const ratio = myPower / info.power;
-      const verdict = ratio > 1.25 ? ['easy', 'FAVOURED'] : ratio > 0.92 ? ['fair', 'FAIR FIGHT'] : ratio > 0.7 ? ['hard', 'RISKY'] : ['brutal', 'UNDERPOWERED'];
+      // Calibrated against tools/balance.mjs: a player who shops after every
+      // win sits around 1.2-1.35, which should read as a fair fight.
+      const verdict = ratio > 1.45 ? ['easy', 'FAVOURED']
+        : ratio > 1.05 ? ['fair', 'FAIR FIGHT']
+          : ratio > 0.85 ? ['hard', 'RISKY'] : ['brutal', 'UNDERPOWERED'];
       // The list runs 100 -> 1, so a tier's heading belongs on its highest floor.
       const tierStart = f % 10 === 0;
       const tierLow = Math.floor((f - 1) / 10) * 10 + 1;
@@ -3636,9 +3648,20 @@ button { font-family: inherit; cursor: pointer; }
           </div>
         </div>`;
     }
+    const conquered = d.cleared >= 100;
     const nextInfo = Floors.get(d.highest);
-    return `${topBar('tower')}
-      <div class="screen tower">
+    const card = conquered ? `
+        <div class="next-card" style="--acc:#ffd76e">
+          <div class="nc-left">
+            <div class="nc-label">TOWER CONQUERED</div>
+            <div class="nc-name">All 100 floors</div>
+            <div class="nc-sub">The Ascendant is beaten. Any floor can be replayed for coins.</div>
+          </div>
+          <div class="nc-right">
+            <div class="power-cmp"><div><span>YOUR POWER</span><b>${U.comma(myPower)}</b></div></div>
+            <button class="big primary" data-ui="train" data-arg="100">FIGHT THE ASCENDANT AGAIN</button>
+          </div>
+        </div>` : `
         <div class="next-card" style="--acc:${nextInfo.tier.accent}">
           <div class="nc-left">
             <div class="nc-label">NEXT FIGHT</div>
@@ -3652,7 +3675,10 @@ button { font-family: inherit; cursor: pointer; }
             </div>
             <button class="big primary" data-ui="fight" data-arg="${nextInfo.floor}">ENTER FLOOR ${nextInfo.floor}</button>
           </div>
-        </div>
+        </div>`;
+    return `${topBar('tower')}
+      <div class="screen tower">
+        ${card}
         <div class="floor-list">${rows}</div>
       </div>`;
   }
@@ -3703,7 +3729,7 @@ button { font-family: inherit; cursor: pointer; }
             <div class="it-foot">${btn}</div>
           </div>`;
       }).join('');
-      return `<div class="slot-block"><h3>${slot.icon} ${slot.name}</h3><div class="items">${cards}</div></div>`;
+      return `<div class="slot-block"><h3><span class="tr-icon">${slot.icon}</span> ${slot.name}</h3><div class="items">${cards}</div></div>`;
     }).join('');
   }
 
@@ -3791,7 +3817,7 @@ button { font-family: inherit; cursor: pointer; }
         <h2>Basic attacks</h2>
         <div class="mv-list">${normals}</div>
         <h2>Combo sequences <small>press the buttons in order, quickly</small></h2>
-        <p class="note">A combo fires on the last button of the sequence. You can also cancel a normal attack into a combo the moment it connects — that is how the big damage happens.</p>
+        <p class="note">A combo fires on the last button of the sequence, and cancels straight out of whatever attack you are already swinging — so a string flows the way it reads. Damage scales down through a long combo, so nothing loops forever.</p>
         <div class="combo-list">${combos}</div>
       </div>`;
   }

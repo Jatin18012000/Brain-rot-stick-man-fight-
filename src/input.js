@@ -271,7 +271,11 @@
 
   Input.bindingLabel = function (action) {
     const codes = Input.keys[action] || [];
-    return codes.map(prettyCode).join(' / ') || '—';
+    const seen = [];
+    codes.map(prettyCode).forEach((label) => {
+      if (label && seen.indexOf(label) === -1) seen.push(label);   // ShiftLeft/ShiftRight both read "SHIFT"
+    });
+    return seen.join(' / ') || '—';
   };
 
   function prettyCode(code) {

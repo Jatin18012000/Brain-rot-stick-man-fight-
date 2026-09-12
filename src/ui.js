@@ -180,11 +180,15 @@
     let rows = '';
     for (let f = 100; f >= 1; f--) {
       const info = Floors.get(f);
-      const cleared = f < d.highest;
-      const current = f === d.highest;
+      const cleared = f <= d.cleared;
+      const current = f === d.highest && !cleared;
       const locked = f > d.highest;
       const ratio = myPower / info.power;
-      const verdict = ratio > 1.25 ? ['easy', 'FAVOURED'] : ratio > 0.92 ? ['fair', 'FAIR FIGHT'] : ratio > 0.7 ? ['hard', 'RISKY'] : ['brutal', 'UNDERPOWERED'];
+      // Calibrated against tools/balance.mjs: a player who shops after every
+      // win sits around 1.2-1.35, which should read as a fair fight.
+      const verdict = ratio > 1.45 ? ['easy', 'FAVOURED']
+        : ratio > 1.05 ? ['fair', 'FAIR FIGHT']
+          : ratio > 0.85 ? ['hard', 'RISKY'] : ['brutal', 'UNDERPOWERED'];
       // The list runs 100 -> 1, so a tier's heading belongs on its highest floor.
       const tierStart = f % 10 === 0;
       const tierLow = Math.floor((f - 1) / 10) * 10 + 1;
@@ -203,9 +207,20 @@
           </div>
         </div>`;
     }
+    const conquered = d.cleared >= 100;
     const nextInfo = Floors.get(d.highest);
-    return `${topBar('tower')}
-      <div class="screen tower">
+    const card = conquered ? `
+        <div class="next-card" style="--acc:#ffd76e">
+          <div class="nc-left">
+            <div class="nc-label">TOWER CONQUERED</div>
+            <div class="nc-name">All 100 floors</div>
+            <div class="nc-sub">The Ascendant is beaten. Any floor can be replayed for coins.</div>
+          </div>
+          <div class="nc-right">
+            <div class="power-cmp"><div><span>YOUR POWER</span><b>${U.comma(myPower)}</b></div></div>
+            <button class="big primary" data-ui="train" data-arg="100">FIGHT THE ASCENDANT AGAIN</button>
+          </div>
+        </div>` : `
         <div class="next-card" style="--acc:${nextInfo.tier.accent}">
           <div class="nc-left">
             <div class="nc-label">NEXT FIGHT</div>
@@ -219,7 +234,10 @@
             </div>
             <button class="big primary" data-ui="fight" data-arg="${nextInfo.floor}">ENTER FLOOR ${nextInfo.floor}</button>
           </div>
-        </div>
+        </div>`;
+    return `${topBar('tower')}
+      <div class="screen tower">
+        ${card}
         <div class="floor-list">${rows}</div>
       </div>`;
   }
@@ -270,7 +288,7 @@
             <div class="it-foot">${btn}</div>
           </div>`;
       }).join('');
-      return `<div class="slot-block"><h3>${slot.icon} ${slot.name}</h3><div class="items">${cards}</div></div>`;
+      return `<div class="slot-block"><h3><span class="tr-icon">${slot.icon}</span> ${slot.name}</h3><div class="items">${cards}</div></div>`;
     }).join('');
   }
 
@@ -358,7 +376,7 @@
         <h2>Basic attacks</h2>
         <div class="mv-list">${normals}</div>
         <h2>Combo sequences <small>press the buttons in order, quickly</small></h2>
-        <p class="note">A combo fires on the last button of the sequence. You can also cancel a normal attack into a combo the moment it connects — that is how the big damage happens.</p>
+        <p class="note">A combo fires on the last button of the sequence, and cancels straight out of whatever attack you are already swinging — so a string flows the way it reads. Damage scales down through a long combo, so nothing loops forever.</p>
         <div class="combo-list">${combos}</div>
       </div>`;
   }

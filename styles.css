@@ -246,6 +246,7 @@ button { font-family: inherit; cursor: pointer; }
 }
 .tab.on { background: var(--blue); color: #06121f; border-color: var(--blue); }
 .slot-block { margin-bottom: 18px; }
+.slot-block h3 { display: flex; align-items: center; gap: 8px; }
 .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .item {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px;
@@ -275,7 +276,10 @@ button { font-family: inherit; cursor: pointer; }
 .trains { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
 .train { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
 .tr-head { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.tr-icon { font-size: 16px; color: var(--gold); }
+.tr-icon {
+  font-size: 9px; font-weight: 900; letter-spacing: .08em; color: var(--gold);
+  border: 1px solid var(--gold); border-radius: 4px; padding: 2px 4px;
+}
 .tr-lvl { margin-left: auto; font-size: 11px; color: var(--dim); }
 .tr-per { font-size: 11px; color: var(--dim); min-height: 28px; }
 .pips { display: flex; gap: 2px; flex-wrap: wrap; }
