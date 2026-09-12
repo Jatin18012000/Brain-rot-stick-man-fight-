@@ -27,6 +27,13 @@ installs to the home screen and runs offline.
   double-click it. The entire game — code, styles, icon, every sound — is that
   one file. Nothing else to install.
 
+**Publish it so your phone can reach it**
+
+The repository ships a GitHub Actions workflow that deploys the game to GitHub
+Pages. Enable it once under **Settings → Pages → Source: GitHub Actions**, and
+every push builds, verifies and publishes. The published URL is what you open
+in Safari to add it to your home screen.
+
 **Run it locally**
 
 ```bash
