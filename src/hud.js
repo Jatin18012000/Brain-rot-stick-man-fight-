@@ -60,7 +60,7 @@
     ctx.font = '700 15px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'left';
     ctx.fillStyle = '#fff';
-    ctx.fillText('YOU  Lv.' + g.save.level, 24, 34);
+    ctx.fillText(p.name.toUpperCase() + '  Lv.' + g.save.level, 24, 34);
     bar(ctx, 24, 42, barW, barH, p.hp / p.maxHp, '#4ade80', null, false, g.ghostP);
     ctx.font = '600 11px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
@@ -142,7 +142,7 @@
     }
 
     // ---- combo hint strip (what you can do right now)
-    if (g.hintT > 0 && g.hint && g.announceT <= 0) {
+    if (g.hintT > 0 && g.hint && g.announceT <= 0 && g.specialBannerT <= 0) {
       const a = U.clamp(g.hintT, 0, 1);
       ctx.globalAlpha = a * 0.92;
       ctx.textAlign = 'center';

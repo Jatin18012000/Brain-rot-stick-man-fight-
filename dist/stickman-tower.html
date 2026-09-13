@@ -389,6 +389,40 @@ button { font-family: inherit; cursor: pointer; }
   .touch { --bs: clamp(42px, 15vh, 58px); }
 }
 
+/* ------------------------------------------------------- character select */
+.cs-head { text-align: center; font-size: clamp(20px, 4vh, 30px); letter-spacing: .08em; margin-top: 10px; }
+.select .note { text-align: center; max-width: 640px; margin: 0 auto 16px; }
+.cs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; align-items: stretch; }
+.cs-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  overflow: hidden; display: flex; flex-direction: column;
+  border-top: 3px solid var(--acc);
+}
+.cs-card.on { border-color: var(--acc); background: linear-gradient(180deg, rgba(255,255,255,.06), var(--panel)); }
+.cs-portrait {
+  width: 100%; height: 210px; display: block;
+  background: radial-gradient(ellipse at 50% 85%, color-mix(in srgb, var(--acc) 22%, transparent), transparent 70%), rgba(0,0,0,.25);
+}
+.cs-body { padding: 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.cs-body .big { margin-top: auto; }
+.cs-role { font-size: 9px; letter-spacing: .2em; font-weight: 900; color: var(--acc); }
+.cs-name { font-size: clamp(19px, 3.4vh, 26px); font-weight: 900; letter-spacing: .03em; line-height: 1; }
+.cs-title { font-size: 11px; color: var(--dim); font-style: italic; }
+.cs-tag { font-size: 12px; margin: 4px 0; line-height: 1.45; }
+.cs-stats { display: flex; flex-direction: column; gap: 3px; margin: 2px 0; }
+.cs-stat { display: flex; align-items: center; gap: 8px; }
+.cs-stat span { font-size: 9px; letter-spacing: .12em; color: var(--dim); width: 52px; }
+.cs-stat i { flex: 1; height: 5px; background: rgba(255,255,255,.10); border-radius: 3px; overflow: hidden; }
+.cs-stat b { display: block; height: 100%; background: var(--acc); }
+.cs-sig { font-size: 11px; color: var(--dim); border-top: 1px solid var(--line); padding-top: 8px; margin-top: 2px; }
+.cs-sig span { font-size: 9px; letter-spacing: .14em; }
+.cs-sig b { color: var(--text); }
+.cs-seq { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+.cs-blurb { font-size: 11px; color: var(--dim); line-height: 1.5; margin: 2px 0 4px; }
+.cs-card .big { margin-bottom: 0; }
+.combo.sig { border-color: var(--gold); }
+.cb-name em { font-style: normal; font-size: 8px; letter-spacing: .12em; background: var(--gold); color: #1a1200; padding: 1px 5px; border-radius: 4px; vertical-align: middle; }
+
 </style>
 </head>
 <body>
@@ -1309,6 +1343,165 @@ button { font-family: inherit; cursor: pointer; }
   };
 })(window);
 
+/* ===== src/characters.js ===== */
+/* Stickman Tower — playable characters.
+ *
+ * A character is pure data: palette, build, stat modifiers, stance, the soft
+ * parts that trail behind them, and one signature combo. The fighting engine
+ * is untouched — frame data, blocking, rage and combo matching are identical
+ * for everyone. Characters change how you feel, not what the rules are.
+ *
+ * NOTE: BLAZE and VESPER are placeholder builds in the engine's own visual
+ * language, standing in until the commissioned character sheets land. To swap
+ * a real design in, edit this file only — nothing else knows their details.
+ *
+ * ---------------------------------------------------------------------------
+ * ATTACHMENTS (the soft parts)
+ *   joint:     head neck shoulderF/B elbowF/B handF/B pelvis hipF/B kneeF/B footF/B
+ *   type chain: a verlet rope — ponytails, braids, coat tails, sashes
+ *     segments  number of links
+ *     length    total length in the 112-unit body space
+ *     width     stroke width at the root, tapering to width*taper
+ *     rest      [x, y] rest direction; x is facing-relative, +y is DOWN
+ *     stiffness 0..1 pull back toward the rest direction
+ *     gravity   px/s^2, damp 0..1 velocity retention
+ *   type shape: a rigid piece — collars, guards, visors
+ *     shape     'wedge' | 'plate' | 'disc'
+ *     size      [w, h], offset [x, y] from the joint (facing-relative x)
+ *     angle     degrees, or 'limb' to follow the limb it hangs from
+ *   color:      'body' | 'accent' | 'trim' | any hex
+ * ---------------------------------------------------------------------------
+ * STATS are multipliers on the player's derived combat block, except `reach`
+ * (flat units added to attack hitbox width) and `crit` (flat chance added).
+ * Keep them modest and offsetting: tools/balance.mjs assumes roughly parity.
+ */
+(function (root) {
+  'use strict';
+
+  const CHARACTERS = [
+    {
+      id: 'classic',
+      name: 'The Stickman',
+      title: 'Floor One, Day One',
+      tagline: 'No gimmicks. No excuses. Every stat dead average, every option open.',
+      role: 'All-rounder',
+      colors: { body: '#f2f4f8', accent: '#6ea8ff', trim: '#9aa3b5', aura: null },
+      build: { scale: 1.00, limbWidth: 1.00, headR: 1.00 },
+      stats: { hp: 1.00, atk: 1.00, spd: 1.00, aspd: 1.00, crit: 0, rage: 1.00, reach: 0 },
+      stance: { lean: 0, guard: 0 },
+      attachments: [],
+      signature: null,
+      blurb: 'The baseline. If a floor is beatable, it is beatable with him.',
+    },
+
+    {
+      id: 'blaze',
+      name: 'BLAZE',
+      title: 'Sixteen Hits and Counting',
+      tagline: 'Gets in, stays in. The whole game plan is not letting you breathe.',
+      role: 'Rushdown',
+      colors: { body: '#ffe3ec', accent: '#ff2d75', trim: '#ffd166', aura: null },
+      build: { scale: 0.96, limbWidth: 0.92, headR: 1.02 },
+      // Fast and relentless, but she has to take risks to win the damage race.
+      stats: { hp: 0.90, atk: 0.96, spd: 1.14, aspd: 1.12, crit: 0.04, rage: 1.12, reach: -3 },
+      stance: { lean: 6, guard: 12 },   // coiled forward, hands up
+      attachments: [
+        {
+          id: 'ponytail', type: 'chain', joint: 'head',
+          segments: 6, length: 32, width: 5.5, taper: 0.2,
+          rest: [-1, 0.12], stiffness: 0.10, gravity: 1600, damp: 0.90,
+          color: 'accent',
+        },
+        {
+          id: 'sash', type: 'chain', joint: 'pelvis',
+          segments: 5, length: 27, width: 4.5, taper: 0.25,
+          rest: [-0.7, 0.7], stiffness: 0.07, gravity: 1800, damp: 0.93,
+          color: 'trim',
+        },
+        {
+          id: 'cuff', type: 'shape', joint: 'elbowF',
+          shape: 'plate', size: [9, 5], offset: [0, 0], angle: 'limb',
+          color: 'accent',
+        },
+      ],
+      signature: {
+        id: 'sigEmber', name: 'Ember Rush', seq: ['K', 'P1', 'P1'],
+        unlock: 1, cost: 14, duration: 54, anim: 'sigEmber',
+        desc: 'Kick, punch, punch. A running start into a two-fist flurry that drags you forward.',
+        hits: [
+          { f: 8, dmg: 11, active: 3, guard: 'mid', hitstun: 16, blockstun: 10, kb: 40, lift: 0, box: { x: 14, y: 46, w: 62, h: 30 } },
+          { f: 20, dmg: 9, active: 3, guard: 'mid', hitstun: 16, blockstun: 10, kb: 30, lift: 0, box: { x: 16, y: 66, w: 50, h: 24 } },
+          { f: 28, dmg: 9, active: 3, guard: 'mid', hitstun: 16, blockstun: 10, kb: 30, lift: 0, box: { x: 16, y: 66, w: 52, h: 24 } },
+          { f: 40, dmg: 24, active: 4, guard: 'mid', hitstun: 28, blockstun: 14, kb: 300, lift: 120, knockdown: true, box: { x: 14, y: 54, w: 72, h: 40 } },
+        ],
+        steps: [{ f: 6, vx: 260 }, { f: 26, vx: 160 }, { f: 38, vx: 200 }],
+      },
+      blurb: 'Fastest walk speed and attack recovery in the game, and the thinnest health bar. '
+        + 'Her signature starts with a kick, so it comes out of neutral when a punch string would be read.',
+    },
+
+    {
+      id: 'vesper',
+      name: 'VESPER',
+      title: 'One Step Is Enough',
+      tagline: 'Holds the space you want to stand in, and charges rent.',
+      role: 'Zoner / Power',
+      colors: { body: '#e8e3ff', accent: '#8b5cf6', trim: '#ffd166', aura: null },
+      build: { scale: 1.10, limbWidth: 1.08, headR: 0.96 },
+      // Longer reach and heavier hits, paid for with speed.
+      stats: { hp: 1.12, atk: 1.10, spd: 0.90, aspd: 0.93, crit: 0, rage: 0.96, reach: 9 },
+      stance: { lean: -4, guard: -9 },  // upright, low relaxed guard
+      attachments: [
+        {
+          id: 'coatBack', type: 'chain', joint: 'pelvis',
+          segments: 6, length: 42, width: 9, taper: 0.4,
+          rest: [-0.8, 0.7], stiffness: 0.09, gravity: 1400, damp: 0.94,
+          color: 'accent',
+        },
+        {
+          id: 'coatFront', type: 'chain', joint: 'hipF',
+          segments: 5, length: 31, width: 6, taper: 0.35,
+          rest: [-0.25, 0.95], stiffness: 0.08, gravity: 1500, damp: 0.94,
+          color: 'accent',
+        },
+        {
+          id: 'collar', type: 'shape', joint: 'neck',
+          shape: 'wedge', size: [12, 9], offset: [-3, -1], angle: -20,
+          color: 'trim',
+        },
+      ],
+      signature: {
+        id: 'sigTollBell', name: 'Toll the Bell', seq: ['P2', 'P1', 'K'],
+        unlock: 1, cost: 18, duration: 62, anim: 'sigTollBell',
+        desc: 'Cross, jab, then a long pivot kick that catches anyone who stepped in.',
+        hits: [
+          { f: 10, dmg: 14, active: 3, guard: 'mid', hitstun: 18, blockstun: 12, kb: 90, lift: 0, box: { x: 16, y: 64, w: 66, h: 28 } },
+          { f: 22, dmg: 10, active: 3, guard: 'mid', hitstun: 16, blockstun: 10, kb: 60, lift: 0, box: { x: 16, y: 68, w: 58, h: 24 } },
+          { f: 42, dmg: 32, active: 5, guard: 'mid', hitstun: 30, blockstun: 16, kb: 360, lift: 150, knockdown: true, guardCrush: 26, box: { x: 14, y: 44, w: 96, h: 40 } },
+        ],
+        steps: [{ f: 40, vx: 120 }],
+      },
+      blurb: 'Every attack box is nine units wider than anyone else\'s, so she wins trades she '
+        + 'has no business winning. Slow enough that a whiff is a real invitation.',
+    },
+  ];
+
+  const BY_ID = {};
+  CHARACTERS.forEach((c) => { BY_ID[c.id] = c; });
+
+  function get(id) { return BY_ID[id] || BY_ID.classic; }
+
+  /* Every special this character can perform: the shared list plus their own. */
+  function specialsFor(id) {
+    const c = get(id);
+    const base = root.ST.Moves.SPECIALS;
+    return c.signature ? base.concat([c.signature]) : base.slice();
+  }
+
+  root.ST = root.ST || {};
+  root.ST.Characters = { CHARACTERS, BY_ID, get, specialsFor };
+})(window);
+
 /* ===== src/floors.js ===== */
 /* Stickman Tower — the 100 floors and the boss that owns each one.
  *
@@ -1583,6 +1776,7 @@ button { font-family: inherit; cursor: pointer; }
   function freshSave() {
     return {
       v: 1,
+      character: null,        // chosen on first play
       floor: 1,
       highest: 1,
       cleared: 0,
@@ -1641,16 +1835,21 @@ button { font-family: inherit; cursor: pointer; }
       const crit = Math.min(0.75, d.train.crit * 0.02 + g.crit / 100);
       const critDmg = 1.6 + g.critdmg / 100;
       const rageMul = (1 + d.train.rage * 0.08) * (1 + g.rage / 100);
+
+      // The chosen character tilts the same numbers rather than replacing them,
+      // so gear and training mean the same thing whoever you pick.
+      const cs = root.ST.Characters.get(d.character).stats;
       return {
-        maxHp: Math.round(maxHp),
-        atkMul,
+        maxHp: Math.round(maxHp * cs.hp),
+        atkMul: atkMul * cs.atk,
         def,
         dr: def / (def + 110),          // damage reduction 0..1
-        spdMul,
-        aspdMul,
-        crit,
+        spdMul: spdMul * cs.spd,
+        aspdMul: aspdMul * cs.aspd,
+        crit: Math.min(0.8, crit + cs.crit),
         critDmg,
-        rageMul,
+        rageMul: rageMul * cs.rage,
+        reach: cs.reach || 0,
         lifesteal: g.lifesteal / 100,
         coinMul: 1 + g.coin / 100,
         tonics: 1 + d.train.pot,
@@ -1661,7 +1860,8 @@ button { font-family: inherit; cursor: pointer; }
     power() {
       const c = P.combat();
       return Math.round(
-        c.maxHp * 0.45 + c.atkMul * 140 + c.def * 1.6 + c.crit * 120 + c.spdMul * 40 + P.data.level * 6
+        c.maxHp * 0.45 + c.atkMul * 140 + c.def * 1.6 + c.crit * 120 + c.spdMul * 40
+        + c.reach * 3 + P.data.level * 6
       );
     },
 
@@ -1680,12 +1880,22 @@ button { font-family: inherit; cursor: pointer; }
       return gained;
     },
 
-    /* Combos unlock with level so floor 1 isn't a wall of options. */
+    /* Combos unlock with level so floor 1 isn't a wall of options. The chosen
+     * character's signature is always in the list — it is who they are. */
+    allSpecials() {
+      return root.ST.Characters.specialsFor(P.data.character);
+    },
     unlockedSpecials() {
-      return root.ST.Moves.SPECIALS.filter((s) => s.unlock <= P.data.level);
+      return P.allSpecials().filter((s) => s.unlock <= P.data.level);
     },
     newlyUnlockedAt(level) {
-      return root.ST.Moves.SPECIALS.filter((s) => s.unlock === level);
+      return P.allSpecials().filter((s) => s.unlock === level);
+    },
+
+    character() { return root.ST.Characters.get(P.data.character); },
+    chooseCharacter(id) {
+      P.data.character = id;
+      P.save();
     },
 
     canBuyItem(item) {
@@ -1819,6 +2029,7 @@ button { font-family: inherit; cursor: pointer; }
     this.colors = cfg.colors || { body: '#eaeaea', accent: '#6ea8ff' };
     this.scale = cfg.scale || 1;
     this.gear = cfg.gear || null;          // equipped ids, for rendering
+    this.character = cfg.character || null; // palette, build, soft parts
     this.stats = cfg.stats;                // combat stats block
     this.specials = cfg.specials || [];    // available special defs
     this.maxHp = this.stats.maxHp;
@@ -2173,18 +2384,25 @@ button { font-family: inherit; cursor: pointer; }
     if (this.state === 'attack' && this.move && !this.hitUsed) {
       const mv = this.move;
       if (this.frame >= mv.startup && this.frame < mv.startup + mv.active) {
-        out.push({ box: this.toWorld(mv.box), data: mv, key: 'normal' });
+        out.push({ box: this.reachBox(mv.box), data: mv, key: 'normal' });
       }
     } else if (this.state === 'special' && this.special) {
       const sp = this.special;
       sp.hits.forEach((h, i) => {
         if (this.specialHitFlags[i]) return;
         if (this.frame >= h.f && this.frame < h.f + h.active) {
-          out.push({ box: this.toWorld(h.box), data: Object.assign({ special: sp, name: sp.name }, h), key: i });
+          out.push({ box: this.reachBox(h.box), data: Object.assign({ special: sp, name: sp.name }, h), key: i });
         }
       });
     }
     return out;
+  };
+
+  /* Character reach extends every attack box forward — the whole identity of a
+   * long-limbed fighter is winning trades a short one cannot reach. */
+  Fighter.prototype.reachBox = function (b) {
+    const reach = this.stats.reach || 0;
+    return this.toWorld(reach ? { x: b.x, y: b.y, w: b.w + reach, h: b.h } : b);
   };
 
   Fighter.prototype.markHitUsed = function (key) {
@@ -2616,6 +2834,22 @@ button { font-family: inherit; cursor: pointer; }
    * windup -> strike -> recover using real frame data so the visuals and the
    * hitboxes always agree. */
   function poseFor(f, t) {
+    const p = basePoseFor(f, t);
+    const st = f.character && f.character.stance;
+    if (!st || (!st.lean && !st.guard)) return p;
+    // lerpPose(p, p, 0) is a cheap deep clone — the POSE table is shared and
+    // must never be mutated.
+    const o = lerpPose(p, p, 0);
+    o.lean += st.lean || 0;
+    if (st.guard) {
+      o.armF[0] += st.guard;
+      o.armB[0] += st.guard;
+    }
+    return o;
+  }
+
+  /* Resolve the animation pose before character stance is layered on. */
+  function basePoseFor(f, t) {
     const anim = f.anim;
     const walkPhase = (t * 8) % (Math.PI * 2);
 
@@ -2992,6 +3226,149 @@ button { font-family: inherit; cursor: pointer; }
   }
   R.hexA = hexA;
 
+  // ---------------------------------------------------------- attachments
+  /* The soft parts — ponytails, sashes, coat tails — are verlet ropes hung off
+   * the skeleton joints the renderer already computes. They are what stop a
+   * character reading as a plain stick figure: the body stops, the hair does
+   * not, and the eye reads weight and speed from the lag. */
+
+  function chainState(f, cfg, anchor, s, facing) {
+    if (!f._att) f._att = {};
+    let st = f._att[cfg.id];
+    const count = (cfg.segments || 4) + 1;
+    if (!st || st.pts.length !== count) {
+      const rest = cfg.rest || [-1, 0];
+      const segLen = (cfg.length / (count - 1)) * s;
+      const pts = [];
+      for (let i = 0; i < count; i++) {
+        pts.push({
+          x: anchor.x + rest[0] * facing * segLen * i,
+          y: anchor.y + rest[1] * segLen * i,
+          px: anchor.x + rest[0] * facing * segLen * i,
+          py: anchor.y + rest[1] * segLen * i,
+        });
+      }
+      st = { pts };
+      f._att[cfg.id] = st;
+    }
+    return st;
+  }
+
+  function stepChain(st, anchor, cfg, s, facing, h) {
+    const pts = st.pts;
+    const segLen = (cfg.length / (pts.length - 1)) * s;
+    pts[0].x = anchor.x; pts[0].y = anchor.y;
+    pts[0].px = anchor.x; pts[0].py = anchor.y;
+
+    const damp = cfg.damp === undefined ? 0.92 : cfg.damp;
+    const g = (cfg.gravity === undefined ? 1500 : cfg.gravity) * s;
+    for (let i = 1; i < pts.length; i++) {
+      const p = pts[i];
+      const vx = (p.x - p.px) * damp;
+      const vy = (p.y - p.py) * damp;
+      p.px = p.x; p.py = p.y;
+      p.x += vx;
+      p.y += vy + g * h * h;
+    }
+
+    // Pull back toward the rest direction so a ponytail trails rather than hangs.
+    const k = cfg.stiffness || 0;
+    if (k > 0) {
+      const rest = cfg.rest || [-1, 0];
+      for (let i = 1; i < pts.length; i++) {
+        const prev = pts[i - 1], p = pts[i];
+        p.x += (prev.x + rest[0] * facing * segLen - p.x) * k * 0.5;
+        p.y += (prev.y + rest[1] * segLen - p.y) * k * 0.5;
+      }
+    }
+
+    for (let it = 0; it < 3; it++) {
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 0.0001;
+        const diff = (d - segLen) / d;
+        b.x -= dx * diff;
+        b.y -= dy * diff;
+      }
+    }
+  }
+
+  function drawChain(ctx, st, cfg, s, color) {
+    const pts = st.pts;
+    const w0 = (cfg.width || 5) * s;
+    const taper = cfg.taper === undefined ? 0.35 : cfg.taper;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = color;
+    for (let i = 1; i < pts.length; i++) {
+      const t = (i - 1) / (pts.length - 1);
+      ctx.lineWidth = w0 * U.lerp(1, taper, t);
+      ctx.beginPath();
+      ctx.moveTo(pts[i - 1].x, pts[i - 1].y);
+      ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke();
+    }
+  }
+
+  function drawRigid(ctx, cfg, joint, limbAngle, s, facing, color) {
+    const a = cfg.angle === 'limb' ? limbAngle : (cfg.angle || 0);
+    const d = dirVec(a, facing);
+    const off = cfg.offset || [0, 0];
+    ctx.save();
+    ctx.translate(joint.x + off[0] * facing * s, joint.y + off[1] * s);
+    ctx.rotate(Math.atan2(d.y, d.x));
+    ctx.fillStyle = color;
+    const w = (cfg.size ? cfg.size[0] : 10) * s;
+    const h = (cfg.size ? cfg.size[1] : 6) * s;
+    if (cfg.shape === 'wedge') {
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.3, -h / 2);
+      ctx.lineTo(w * 0.7, 0);
+      ctx.lineTo(-w * 0.3, h / 2);
+      ctx.closePath();
+      ctx.fill();
+    } else if (cfg.shape === 'disc') {
+      ctx.beginPath(); ctx.arc(0, 0, w / 2, 0, 7); ctx.fill();
+    } else {
+      ctx.beginPath();
+      const r = Math.min(w, h) * 0.35;
+      ctx.moveTo(-w / 2 + r, -h / 2);
+      ctx.arcTo(w / 2, -h / 2, w / 2, h / 2, r);
+      ctx.arcTo(w / 2, h / 2, -w / 2, h / 2, r);
+      ctx.arcTo(-w / 2, h / 2, -w / 2, -h / 2, r);
+      ctx.arcTo(-w / 2, -h / 2, w / 2, -h / 2, r);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function attachColor(f, name) {
+    const c = (f.character && f.character.colors) || f.colors;
+    if (name === 'body') return c.body || f.colors.body;
+    if (name === 'accent') return c.accent || f.colors.accent;
+    if (name === 'trim') return c.trim || shade(c.accent || f.colors.accent, -0.25);
+    return name || f.colors.accent;
+  }
+
+  /* Step every rope once per frame, then draw the requested layer. */
+  function attachments(ctx, f, joints, angles, s, facing, h, layer) {
+    const list = (f.character && f.character.attachments) || null;
+    if (!list || !list.length) return;
+    list.forEach((cfg) => {
+      const joint = joints[cfg.joint];
+      if (!joint) return;
+      const front = cfg.front === undefined ? (cfg.type === 'shape') : cfg.front;
+      if (cfg.type === 'chain') {
+        const st = chainState(f, cfg, joint, s, facing);
+        if (layer === 'back') stepChain(st, joint, cfg, s, facing, h);
+        if ((layer === 'front') === !!front) drawChain(ctx, st, cfg, s, attachColor(f, cfg.color));
+      } else if ((layer === 'front') === !!front) {
+        drawRigid(ctx, cfg, joint, angles[cfg.joint] || 0, s, facing, attachColor(f, cfg.color));
+      }
+    });
+  }
+
   // -------------------------------------------------------- fighter render
   function drawFighter(ctx, f, opts) {
     const o = opts || {};
@@ -3019,8 +3396,31 @@ button { font-family: inherit; cursor: pointer; }
     const legB = limb(hipB.x, hipB.y, p.legB[0], P.thigh * s, p.legB[1], P.shin * s, facing);
 
     const gear = f.gear || {};
+    const build = (f.character && f.character.build) || { limbWidth: 1, headR: 1 };
     const bodyColor = f.flash > 0 ? '#ffffff' : f.colors.body;
-    const lw = 7 * s;
+    const lw = 7 * s * (build.limbWidth || 1);
+    const headR = P.headR * s * (build.headR || 1);
+
+    // Where the soft parts hang from, and the limb angle at each of them.
+    const joints = {
+      head: headC, neck: neck, pelvis: pelvis,
+      shoulderF: shoulderF, shoulderB: shoulderB,
+      elbowF: armF.joint, elbowB: armB.joint,
+      handF: armF.end, handB: armB.end,
+      hipF: hipF, hipB: hipB,
+      kneeF: legF.joint, kneeB: legB.joint,
+      footF: legF.end, footB: legB.end,
+    };
+    const angles = {
+      head: p.lean, neck: p.lean, pelvis: 180 + p.lean,
+      shoulderF: p.armF[0], shoulderB: p.armB[0],
+      elbowF: p.armF[0] + p.armF[1], elbowB: p.armB[0] + p.armB[1],
+      handF: p.armF[0] + p.armF[1], handB: p.armB[0] + p.armB[1],
+      hipF: p.legF[0], hipB: p.legB[0],
+      kneeF: p.legF[0] + p.legF[1], kneeB: p.legB[0] + p.legB[1],
+      footF: p.legF[0] + p.legF[1], footB: p.legB[0] + p.legB[1],
+    };
+    const h = Math.min(o.dt === undefined ? 1 / 60 : o.dt, 1 / 30);
 
     ctx.save();
 
@@ -3046,14 +3446,18 @@ button { font-family: inherit; cursor: pointer; }
       ctx.globalAlpha = 1;
     }
 
-    // shadow
-    ctx.globalAlpha = U.clamp(1 - (GROUND_Y - y) / 260, 0.15, 0.5);
-    ctx.fillStyle = '#000';
-    ctx.beginPath(); ctx.ellipse(x, GROUND_Y + 2, 26 * s, 6 * s, 0, 0, 7); ctx.fill();
-    ctx.globalAlpha = 1;
+    // shadow (skipped for character-select cards, which have no floor)
+    if (!o.noShadow) {
+      ctx.globalAlpha = U.clamp(1 - (GROUND_Y - y) / 260, 0.15, 0.5);
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.ellipse(x, GROUND_Y + 2, 26 * s, 6 * s, 0, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
 
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+
+    attachments(ctx, f, joints, angles, s, facing, h, 'back');
 
     // back limbs (darker, reads as depth)
     const backColor = shade(bodyColor, -0.35);
@@ -3072,26 +3476,28 @@ button { font-family: inherit; cursor: pointer; }
     }
     stroke(ctx, [pelvis, neck], lw * 1.15, bodyColor);
 
+    attachments(ctx, f, joints, angles, s, facing, h, 'front');
+
     // head
     ctx.fillStyle = bodyColor;
-    ctx.beginPath(); ctx.arc(headC.x, headC.y, P.headR * s, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(headC.x, headC.y, headR, 0, 7); ctx.fill();
     if (gear.head) {
       ctx.fillStyle = gear.headColor || f.colors.accent;
       ctx.beginPath();
-      ctx.arc(headC.x, headC.y, P.headR * s * 1.06, Math.PI * (facing > 0 ? 0.95 : 0.05), Math.PI * (facing > 0 ? 2.05 : 1.15));
+      ctx.arc(headC.x, headC.y, headR * 1.06, Math.PI * (facing > 0 ? 0.95 : 0.05), Math.PI * (facing > 0 ? 2.05 : 1.15));
       ctx.fill();
       if (gear.headTier >= 5) {
         ctx.strokeStyle = gear.headColor || f.colors.accent;
         ctx.lineWidth = 2 * s;
         ctx.beginPath();
-        ctx.moveTo(headC.x - facing * 2 * s, headC.y - P.headR * s);
-        ctx.lineTo(headC.x + facing * 3 * s, headC.y - P.headR * s * 2.1);
+        ctx.moveTo(headC.x - facing * 2 * s, headC.y - headR);
+        ctx.lineTo(headC.x + facing * 3 * s, headC.y - headR * 2.1);
         ctx.stroke();
       }
     }
     // eye direction dot — sells which way the fighter faces
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.beginPath(); ctx.arc(headC.x + facing * P.headR * 0.42 * s, headC.y - 1 * s, 1.9 * s, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(headC.x + facing * headR * 0.42, headC.y - 1 * s, 1.9 * s, 0, 7); ctx.fill();
 
     // front limbs
     stroke(ctx, [hipF, legF.joint, legF.end], lw, bodyColor);
@@ -3221,6 +3627,33 @@ button { font-family: inherit; cursor: pointer; }
     ctx.restore();
   }
 
+  /* Character-select cards draw the real fighter, hair physics and all, rather
+   * than a separate piece of art that could drift out of sync with the game. */
+  function drawPortrait(ctx, character, t, w, hgt, dt) {
+    const pf = portraitFighters[character.id] || (portraitFighters[character.id] = {
+      scale: 1, colors: character.colors, character: character,
+      flash: 0, animT: 0, anim: 'idle', vy: 0, x: 0, y: 0, facing: 1,
+      gear: {}, meter: 0, state: 'idle', blocking: false, tonicFlash: 0,
+      hurtbox: () => ({ x: 0, y: 0, w: 0, h: 0 }), activeHits: () => [],
+    });
+    pf.animT = t;
+    pf.character = character;
+    pf.colors = character.colors;
+    const cycle = t % 6;
+    pf.anim = cycle < 3.4 ? 'idle' : cycle < 4.2 ? 'walk' : cycle < 5.2 ? 'block' : 'idle';
+
+    const scale = Math.min(w / 90, hgt / 135);
+    ctx.save();
+    ctx.clearRect(0, 0, w, hgt);
+    ctx.translate(w / 2, hgt * 0.94);
+    ctx.scale(scale, scale);
+    pf.x = 0; pf.y = 0;
+    drawFighter(ctx, pf, { dt: dt, noShadow: true });
+    ctx.restore();
+  }
+  const portraitFighters = {};
+
+  R.drawPortrait = drawPortrait;
   R.POSE = POSE;
   R.P = P;
   R.FX = FX;
@@ -3299,7 +3732,7 @@ button { font-family: inherit; cursor: pointer; }
     ctx.font = '700 15px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'left';
     ctx.fillStyle = '#fff';
-    ctx.fillText('YOU  Lv.' + g.save.level, 24, 34);
+    ctx.fillText(p.name.toUpperCase() + '  Lv.' + g.save.level, 24, 34);
     bar(ctx, 24, 42, barW, barH, p.hp / p.maxHp, '#4ade80', null, false, g.ghostP);
     ctx.font = '600 11px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
@@ -3381,7 +3814,7 @@ button { font-family: inherit; cursor: pointer; }
     }
 
     // ---- combo hint strip (what you can do right now)
-    if (g.hintT > 0 && g.hint && g.announceT <= 0) {
+    if (g.hintT > 0 && g.hint && g.announceT <= 0 && g.specialBannerT <= 0) {
       const a = U.clamp(g.hintT, 0, 1);
       ctx.globalAlpha = a * 0.92;
       ctx.textAlign = 'center';
@@ -3476,7 +3909,13 @@ button { font-family: inherit; cursor: pointer; }
   function handle(action, arg, btn) {
     const G = root.ST.Game;
     switch (action) {
-      case 'play': UI.show('tower'); break;
+      case 'play': UI.show(Progress.data.character ? 'tower' : 'select'); break;
+      case 'select': UI.show('select'); break;
+      case 'pick':
+        Progress.chooseCharacter(arg);
+        Audio.play('levelUp');
+        UI.show('tower');
+        break;
       case 'tower': UI.show('tower'); break;
       case 'shop': UI.show('shop'); break;
       case 'moves': UI.show('moves'); break;
@@ -3554,8 +3993,11 @@ button { font-family: inherit; cursor: pointer; }
     document.getElementById('app').classList.toggle('fighting', screen === 'fight');
     UI.el.scrollTop = 0;
 
+    if (UI._portraitRAF) { cancelAnimationFrame(UI._portraitRAF); UI._portraitRAF = null; }
+
     switch (screen) {
       case 'title': UI.el.innerHTML = titleScreen(); break;
+      case 'select': UI.el.innerHTML = selectScreen(); break;
       case 'tower': UI.el.innerHTML = towerScreen(); break;
       case 'shop': UI.el.innerHTML = shopScreen(); break;
       case 'moves': UI.el.innerHTML = movesScreen(); break;
@@ -3566,6 +4008,7 @@ button { font-family: inherit; cursor: pointer; }
       default: break;
     }
     if (screen === 'tower') scrollToCurrentFloor();
+    if (screen === 'select') startPortraits();
   };
 
   function topBar(active) {
@@ -3583,6 +4026,7 @@ button { font-family: inherit; cursor: pointer; }
           <button class="chip ${active === 'tower' ? 'on' : ''}" data-ui="tower">TOWER</button>
           <button class="chip ${active === 'shop' ? 'on' : ''}" data-ui="shop">SHOP</button>
           <button class="chip ${active === 'moves' ? 'on' : ''}" data-ui="moves">MOVES</button>
+          <button class="chip" data-ui="select">FIGHTER</button>
           <button class="chip ${active === 'settings' ? 'on' : ''}" data-ui="settings">⚙</button>
         </div>
       </div>
@@ -3602,6 +4046,7 @@ button { font-family: inherit; cursor: pointer; }
         <div class="title-buttons">
           <button class="big primary" data-ui="play">${started ? 'CONTINUE — FLOOR ' + d.floor : 'START CLIMBING'}</button>
           <button class="big" data-ui="howto">HOW TO PLAY</button>
+          <button class="big" data-ui="select">CHOOSE FIGHTER</button>
           <button class="big" data-ui="moves">MOVES &amp; COMBOS</button>
           <button class="big" data-ui="settings">SETTINGS</button>
           <button class="big ghost" data-ui="install">INSTALL ON PHONE / LAPTOP</button>
@@ -3613,6 +4058,78 @@ button { font-family: inherit; cursor: pointer; }
           <span>Best combo <b>${d.stats.bestCombo}</b></span>
         </div>` : ''}
       </div>`;
+  }
+
+  /* Character select. The cards draw the actual fighters, so what you preview
+   * is exactly what walks into the arena. */
+  function selectScreen() {
+    const chosen = Progress.data.character;
+    const cards = root.ST.Characters.CHARACTERS.map((c) => {
+      const bars = [
+        ['POWER', c.stats.atk],
+        ['SPEED', c.stats.spd],
+        ['HEALTH', c.stats.hp],
+        ['REACH', 1 + c.stats.reach / 30],
+      ].map(([label, v]) => {
+        const pct = U.clamp((v - 0.82) / 0.36, 0.06, 1) * 100;
+        return `<div class="cs-stat"><span>${label}</span><i><b style="width:${pct.toFixed(0)}%"></b></i></div>`;
+      }).join('');
+      const sig = c.signature
+        ? `<div class="cs-sig"><span>SIGNATURE</span> <b>${esc(c.signature.name)}</b>
+             <div class="cs-seq">${c.signature.seq.map((k) => `<i class="key ${k}">${k}</i>`).join('<b>→</b>')}</div></div>`
+        : '<div class="cs-sig"><span>SIGNATURE</span> <b>None — every combo, no bias</b></div>';
+      return `
+        <div class="cs-card ${chosen === c.id ? 'on' : ''}" style="--acc:${c.colors.accent}">
+          <canvas class="cs-portrait" data-char="${c.id}" width="240" height="340"></canvas>
+          <div class="cs-body">
+            <div class="cs-role">${esc(c.role)}</div>
+            <div class="cs-name">${esc(c.name)}</div>
+            <div class="cs-title">${esc(c.title)}</div>
+            <p class="cs-tag">${esc(c.tagline)}</p>
+            <div class="cs-stats">${bars}</div>
+            ${sig}
+            <p class="cs-blurb">${esc(c.blurb)}</p>
+            <button class="big ${chosen === c.id ? '' : 'primary'}" data-ui="pick" data-arg="${c.id}">
+              ${chosen === c.id ? 'SELECTED — KEEP CLIMBING' : 'CHOOSE ' + esc(c.name.toUpperCase())}
+            </button>
+          </div>
+        </div>`;
+    }).join('');
+
+    return `${Progress.data.character ? topBar('') : ''}
+      <div class="screen select">
+        <h2 class="cs-head">CHOOSE YOUR FIGHTER</h2>
+        <p class="note">Same tower, same rules, same gear and training. They differ in how they
+          get it done — and each one brings a signature combo that nobody else can throw.
+          You can switch fighter any time; your floors, coins and gear stay with you.</p>
+        <div class="cs-grid">${cards}</div>
+      </div>`;
+  }
+
+  function startPortraits() {
+    const canvases = Array.prototype.slice.call(document.querySelectorAll('.cs-portrait'));
+    if (!canvases.length) return;
+    // Match the backing store to the CSS box, or the fighters come out squashed.
+    const dpr = Math.min(root.devicePixelRatio || 1, 2);
+    const ctxs = canvases.map((cv) => {
+      const r = cv.getBoundingClientRect();
+      cv.width = Math.max(1, Math.round(r.width * dpr));
+      cv.height = Math.max(1, Math.round(r.height * dpr));
+      return {
+        ctx: cv.getContext('2d'),
+        ch: root.ST.Characters.get(cv.dataset.char),
+        w: cv.width, h: cv.height,
+      };
+    });
+    let last = performance.now();
+    const tick = (now) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const t = now / 1000;
+      ctxs.forEach((c) => root.ST.Render.drawPortrait(c.ctx, c.ch, t, c.w, c.h, dt));
+      UI._portraitRAF = requestAnimationFrame(tick);
+    };
+    UI._portraitRAF = requestAnimationFrame(tick);
   }
 
   function towerScreen() {
@@ -3797,13 +4314,13 @@ button { font-family: inherit; cursor: pointer; }
       ['Tap ◀◀ / ▶▶', 'Dash'],
     ].map(([k, v]) => `<div class="mv"><span class="mv-in">${esc(k)}</span><span class="mv-de">${esc(v)}</span></div>`).join('');
 
-    const combos = Moves.SPECIALS.map((sp) => {
+    const combos = Progress.allSpecials().map((sp) => {
       const unlocked = sp.unlock <= lvl;
       const seq = sp.seq.map((s) => `<i class="key ${s}">${s === 'P1' ? 'P1' : s === 'P2' ? 'P2' : s === 'K' ? 'K' : s === 'D' ? '▼' : s === 'F' ? '▶' : '◀'}</i>`).join('<b>→</b>');
       return `
-        <div class="combo ${unlocked ? '' : 'locked'} ${sp.ultimate ? 'ult' : ''}">
+        <div class="combo ${unlocked ? '' : 'locked'} ${sp.ultimate ? 'ult' : ''} ${sp.id.indexOf('sig') === 0 ? 'sig' : ''}">
           <div class="cb-head">
-            <span class="cb-name">${esc(sp.name)}${sp.ultimate ? ' ★' : ''}</span>
+            <span class="cb-name">${esc(sp.name)}${sp.ultimate ? ' ★' : ''}${sp.id.indexOf('sig') === 0 ? ' <em>SIGNATURE</em>' : ''}</span>
             <span class="cb-cost">${sp.cost ? sp.cost + ' rage' : 'free'}</span>
           </div>
           <div class="cb-seq">${seq}</div>
@@ -4083,10 +4600,12 @@ button { font-family: inherit; cursor: pointer; }
     const stats = Progress.combat();
 
     const gear = buildGearVisual();
+    const character = Progress.character();
     const player = new Fighter({
-      name: 'You', isPlayer: true, x: 300, facing: 1,
-      colors: { body: '#f2f4f8', accent: '#6ea8ff' },
-      stats: stats, gear: gear, scale: 1,
+      name: character.name, isPlayer: true, x: 300, facing: 1,
+      colors: character.colors,
+      character: character,
+      stats: stats, gear: gear, scale: character.build.scale,
       specials: Progress.unlockedSpecials(),
     });
     player.y = BOUNDS.ground;
@@ -4130,6 +4649,8 @@ button { font-family: inherit; cursor: pointer; }
     Game.t = 0;
     Game.paused = false;
     Game.hint = null; Game.hintT = 0;
+    Game.specialList = Progress.allSpecials().slice()
+      .sort((a, b) => b.seq.length - a.seq.length);
     Game.specialBanner = null; Game.specialBannerT = 0;
     R.FX.clear();
 
@@ -4185,6 +4706,7 @@ button { font-family: inherit; cursor: pointer; }
     if (!Game.running) return;
     const raw = Math.min(0.05, (now - Game.last) / 1000);
     Game.last = now;
+    Game.frameDt = raw;
     Input.update();
 
     if (Game.screen === 'fight' && !Game.paused) {
@@ -4379,7 +4901,7 @@ button { font-family: inherit; cursor: pointer; }
     const tokens = Input.recentTokens(p.facing);
     if (!tokens.length) return null;
     const buttonsOnly = tokens.filter((t) => t === 'P1' || t === 'P2' || t === 'K');
-    const list = Moves.SPECIALS_BY_LENGTH;
+    const list = Game.specialList || Moves.SPECIALS_BY_LENGTH;
     for (let i = 0; i < list.length; i++) {
       const sp = list[i];
       if (sp.unlock > Progress.data.level) continue;
@@ -4635,7 +5157,7 @@ button { font-family: inherit; cursor: pointer; }
     R.drawBackground(ctx, Game.bossInfo.tier, Game.t, Game.shakeX);
 
     const order = Game.player.y <= Game.boss.y ? [Game.boss, Game.player] : [Game.player, Game.boss];
-    order.forEach((f) => R.drawFighter(ctx, f, { debug: Game.settings.debug }));
+    order.forEach((f) => R.drawFighter(ctx, f, { debug: Game.settings.debug, dt: Game.frameDt }));
 
     Game.projectiles.forEach((pr) => R.drawProjectile(ctx, pr, Game.t));
     R.drawFx(ctx);
@@ -4683,7 +5205,11 @@ button { font-family: inherit; cursor: pointer; }
     demo.y = R.GROUND_Y - (cycle >= 4.4 && cycle < 5.4 ? Math.sin((cycle - 4.4) * Math.PI) * 90 : 0);
     demo.x = 170 + Math.sin(t * 0.6) * 40;
     demo.gear = buildGearVisual();
-    R.drawFighter(ctx, demo, {});
+    const ch = Progress.character();
+    demo.character = ch;
+    demo.colors = ch.colors;
+    demo.scale = ch.build.scale;
+    R.drawFighter(ctx, demo, { dt: Game.frameDt });
     ctx.fillStyle = 'rgba(4,6,12,0.55)';
     ctx.fillRect(0, 0, R.W, R.H);
   }

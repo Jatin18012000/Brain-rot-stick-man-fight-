@@ -97,6 +97,22 @@
    * windup -> strike -> recover using real frame data so the visuals and the
    * hitboxes always agree. */
   function poseFor(f, t) {
+    const p = basePoseFor(f, t);
+    const st = f.character && f.character.stance;
+    if (!st || (!st.lean && !st.guard)) return p;
+    // lerpPose(p, p, 0) is a cheap deep clone — the POSE table is shared and
+    // must never be mutated.
+    const o = lerpPose(p, p, 0);
+    o.lean += st.lean || 0;
+    if (st.guard) {
+      o.armF[0] += st.guard;
+      o.armB[0] += st.guard;
+    }
+    return o;
+  }
+
+  /* Resolve the animation pose before character stance is layered on. */
+  function basePoseFor(f, t) {
     const anim = f.anim;
     const walkPhase = (t * 8) % (Math.PI * 2);
 
@@ -473,6 +489,149 @@
   }
   R.hexA = hexA;
 
+  // ---------------------------------------------------------- attachments
+  /* The soft parts — ponytails, sashes, coat tails — are verlet ropes hung off
+   * the skeleton joints the renderer already computes. They are what stop a
+   * character reading as a plain stick figure: the body stops, the hair does
+   * not, and the eye reads weight and speed from the lag. */
+
+  function chainState(f, cfg, anchor, s, facing) {
+    if (!f._att) f._att = {};
+    let st = f._att[cfg.id];
+    const count = (cfg.segments || 4) + 1;
+    if (!st || st.pts.length !== count) {
+      const rest = cfg.rest || [-1, 0];
+      const segLen = (cfg.length / (count - 1)) * s;
+      const pts = [];
+      for (let i = 0; i < count; i++) {
+        pts.push({
+          x: anchor.x + rest[0] * facing * segLen * i,
+          y: anchor.y + rest[1] * segLen * i,
+          px: anchor.x + rest[0] * facing * segLen * i,
+          py: anchor.y + rest[1] * segLen * i,
+        });
+      }
+      st = { pts };
+      f._att[cfg.id] = st;
+    }
+    return st;
+  }
+
+  function stepChain(st, anchor, cfg, s, facing, h) {
+    const pts = st.pts;
+    const segLen = (cfg.length / (pts.length - 1)) * s;
+    pts[0].x = anchor.x; pts[0].y = anchor.y;
+    pts[0].px = anchor.x; pts[0].py = anchor.y;
+
+    const damp = cfg.damp === undefined ? 0.92 : cfg.damp;
+    const g = (cfg.gravity === undefined ? 1500 : cfg.gravity) * s;
+    for (let i = 1; i < pts.length; i++) {
+      const p = pts[i];
+      const vx = (p.x - p.px) * damp;
+      const vy = (p.y - p.py) * damp;
+      p.px = p.x; p.py = p.y;
+      p.x += vx;
+      p.y += vy + g * h * h;
+    }
+
+    // Pull back toward the rest direction so a ponytail trails rather than hangs.
+    const k = cfg.stiffness || 0;
+    if (k > 0) {
+      const rest = cfg.rest || [-1, 0];
+      for (let i = 1; i < pts.length; i++) {
+        const prev = pts[i - 1], p = pts[i];
+        p.x += (prev.x + rest[0] * facing * segLen - p.x) * k * 0.5;
+        p.y += (prev.y + rest[1] * segLen - p.y) * k * 0.5;
+      }
+    }
+
+    for (let it = 0; it < 3; it++) {
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 0.0001;
+        const diff = (d - segLen) / d;
+        b.x -= dx * diff;
+        b.y -= dy * diff;
+      }
+    }
+  }
+
+  function drawChain(ctx, st, cfg, s, color) {
+    const pts = st.pts;
+    const w0 = (cfg.width || 5) * s;
+    const taper = cfg.taper === undefined ? 0.35 : cfg.taper;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = color;
+    for (let i = 1; i < pts.length; i++) {
+      const t = (i - 1) / (pts.length - 1);
+      ctx.lineWidth = w0 * U.lerp(1, taper, t);
+      ctx.beginPath();
+      ctx.moveTo(pts[i - 1].x, pts[i - 1].y);
+      ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke();
+    }
+  }
+
+  function drawRigid(ctx, cfg, joint, limbAngle, s, facing, color) {
+    const a = cfg.angle === 'limb' ? limbAngle : (cfg.angle || 0);
+    const d = dirVec(a, facing);
+    const off = cfg.offset || [0, 0];
+    ctx.save();
+    ctx.translate(joint.x + off[0] * facing * s, joint.y + off[1] * s);
+    ctx.rotate(Math.atan2(d.y, d.x));
+    ctx.fillStyle = color;
+    const w = (cfg.size ? cfg.size[0] : 10) * s;
+    const h = (cfg.size ? cfg.size[1] : 6) * s;
+    if (cfg.shape === 'wedge') {
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.3, -h / 2);
+      ctx.lineTo(w * 0.7, 0);
+      ctx.lineTo(-w * 0.3, h / 2);
+      ctx.closePath();
+      ctx.fill();
+    } else if (cfg.shape === 'disc') {
+      ctx.beginPath(); ctx.arc(0, 0, w / 2, 0, 7); ctx.fill();
+    } else {
+      ctx.beginPath();
+      const r = Math.min(w, h) * 0.35;
+      ctx.moveTo(-w / 2 + r, -h / 2);
+      ctx.arcTo(w / 2, -h / 2, w / 2, h / 2, r);
+      ctx.arcTo(w / 2, h / 2, -w / 2, h / 2, r);
+      ctx.arcTo(-w / 2, h / 2, -w / 2, -h / 2, r);
+      ctx.arcTo(-w / 2, -h / 2, w / 2, -h / 2, r);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function attachColor(f, name) {
+    const c = (f.character && f.character.colors) || f.colors;
+    if (name === 'body') return c.body || f.colors.body;
+    if (name === 'accent') return c.accent || f.colors.accent;
+    if (name === 'trim') return c.trim || shade(c.accent || f.colors.accent, -0.25);
+    return name || f.colors.accent;
+  }
+
+  /* Step every rope once per frame, then draw the requested layer. */
+  function attachments(ctx, f, joints, angles, s, facing, h, layer) {
+    const list = (f.character && f.character.attachments) || null;
+    if (!list || !list.length) return;
+    list.forEach((cfg) => {
+      const joint = joints[cfg.joint];
+      if (!joint) return;
+      const front = cfg.front === undefined ? (cfg.type === 'shape') : cfg.front;
+      if (cfg.type === 'chain') {
+        const st = chainState(f, cfg, joint, s, facing);
+        if (layer === 'back') stepChain(st, joint, cfg, s, facing, h);
+        if ((layer === 'front') === !!front) drawChain(ctx, st, cfg, s, attachColor(f, cfg.color));
+      } else if ((layer === 'front') === !!front) {
+        drawRigid(ctx, cfg, joint, angles[cfg.joint] || 0, s, facing, attachColor(f, cfg.color));
+      }
+    });
+  }
+
   // -------------------------------------------------------- fighter render
   function drawFighter(ctx, f, opts) {
     const o = opts || {};
@@ -500,8 +659,31 @@
     const legB = limb(hipB.x, hipB.y, p.legB[0], P.thigh * s, p.legB[1], P.shin * s, facing);
 
     const gear = f.gear || {};
+    const build = (f.character && f.character.build) || { limbWidth: 1, headR: 1 };
     const bodyColor = f.flash > 0 ? '#ffffff' : f.colors.body;
-    const lw = 7 * s;
+    const lw = 7 * s * (build.limbWidth || 1);
+    const headR = P.headR * s * (build.headR || 1);
+
+    // Where the soft parts hang from, and the limb angle at each of them.
+    const joints = {
+      head: headC, neck: neck, pelvis: pelvis,
+      shoulderF: shoulderF, shoulderB: shoulderB,
+      elbowF: armF.joint, elbowB: armB.joint,
+      handF: armF.end, handB: armB.end,
+      hipF: hipF, hipB: hipB,
+      kneeF: legF.joint, kneeB: legB.joint,
+      footF: legF.end, footB: legB.end,
+    };
+    const angles = {
+      head: p.lean, neck: p.lean, pelvis: 180 + p.lean,
+      shoulderF: p.armF[0], shoulderB: p.armB[0],
+      elbowF: p.armF[0] + p.armF[1], elbowB: p.armB[0] + p.armB[1],
+      handF: p.armF[0] + p.armF[1], handB: p.armB[0] + p.armB[1],
+      hipF: p.legF[0], hipB: p.legB[0],
+      kneeF: p.legF[0] + p.legF[1], kneeB: p.legB[0] + p.legB[1],
+      footF: p.legF[0] + p.legF[1], footB: p.legB[0] + p.legB[1],
+    };
+    const h = Math.min(o.dt === undefined ? 1 / 60 : o.dt, 1 / 30);
 
     ctx.save();
 
@@ -527,14 +709,18 @@
       ctx.globalAlpha = 1;
     }
 
-    // shadow
-    ctx.globalAlpha = U.clamp(1 - (GROUND_Y - y) / 260, 0.15, 0.5);
-    ctx.fillStyle = '#000';
-    ctx.beginPath(); ctx.ellipse(x, GROUND_Y + 2, 26 * s, 6 * s, 0, 0, 7); ctx.fill();
-    ctx.globalAlpha = 1;
+    // shadow (skipped for character-select cards, which have no floor)
+    if (!o.noShadow) {
+      ctx.globalAlpha = U.clamp(1 - (GROUND_Y - y) / 260, 0.15, 0.5);
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.ellipse(x, GROUND_Y + 2, 26 * s, 6 * s, 0, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
 
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+
+    attachments(ctx, f, joints, angles, s, facing, h, 'back');
 
     // back limbs (darker, reads as depth)
     const backColor = shade(bodyColor, -0.35);
@@ -553,26 +739,28 @@
     }
     stroke(ctx, [pelvis, neck], lw * 1.15, bodyColor);
 
+    attachments(ctx, f, joints, angles, s, facing, h, 'front');
+
     // head
     ctx.fillStyle = bodyColor;
-    ctx.beginPath(); ctx.arc(headC.x, headC.y, P.headR * s, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(headC.x, headC.y, headR, 0, 7); ctx.fill();
     if (gear.head) {
       ctx.fillStyle = gear.headColor || f.colors.accent;
       ctx.beginPath();
-      ctx.arc(headC.x, headC.y, P.headR * s * 1.06, Math.PI * (facing > 0 ? 0.95 : 0.05), Math.PI * (facing > 0 ? 2.05 : 1.15));
+      ctx.arc(headC.x, headC.y, headR * 1.06, Math.PI * (facing > 0 ? 0.95 : 0.05), Math.PI * (facing > 0 ? 2.05 : 1.15));
       ctx.fill();
       if (gear.headTier >= 5) {
         ctx.strokeStyle = gear.headColor || f.colors.accent;
         ctx.lineWidth = 2 * s;
         ctx.beginPath();
-        ctx.moveTo(headC.x - facing * 2 * s, headC.y - P.headR * s);
-        ctx.lineTo(headC.x + facing * 3 * s, headC.y - P.headR * s * 2.1);
+        ctx.moveTo(headC.x - facing * 2 * s, headC.y - headR);
+        ctx.lineTo(headC.x + facing * 3 * s, headC.y - headR * 2.1);
         ctx.stroke();
       }
     }
     // eye direction dot — sells which way the fighter faces
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.beginPath(); ctx.arc(headC.x + facing * P.headR * 0.42 * s, headC.y - 1 * s, 1.9 * s, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(headC.x + facing * headR * 0.42, headC.y - 1 * s, 1.9 * s, 0, 7); ctx.fill();
 
     // front limbs
     stroke(ctx, [hipF, legF.joint, legF.end], lw, bodyColor);
@@ -702,6 +890,33 @@
     ctx.restore();
   }
 
+  /* Character-select cards draw the real fighter, hair physics and all, rather
+   * than a separate piece of art that could drift out of sync with the game. */
+  function drawPortrait(ctx, character, t, w, hgt, dt) {
+    const pf = portraitFighters[character.id] || (portraitFighters[character.id] = {
+      scale: 1, colors: character.colors, character: character,
+      flash: 0, animT: 0, anim: 'idle', vy: 0, x: 0, y: 0, facing: 1,
+      gear: {}, meter: 0, state: 'idle', blocking: false, tonicFlash: 0,
+      hurtbox: () => ({ x: 0, y: 0, w: 0, h: 0 }), activeHits: () => [],
+    });
+    pf.animT = t;
+    pf.character = character;
+    pf.colors = character.colors;
+    const cycle = t % 6;
+    pf.anim = cycle < 3.4 ? 'idle' : cycle < 4.2 ? 'walk' : cycle < 5.2 ? 'block' : 'idle';
+
+    const scale = Math.min(w / 90, hgt / 135);
+    ctx.save();
+    ctx.clearRect(0, 0, w, hgt);
+    ctx.translate(w / 2, hgt * 0.94);
+    ctx.scale(scale, scale);
+    pf.x = 0; pf.y = 0;
+    drawFighter(ctx, pf, { dt: dt, noShadow: true });
+    ctx.restore();
+  }
+  const portraitFighters = {};
+
+  R.drawPortrait = drawPortrait;
   R.POSE = POSE;
   R.P = P;
   R.FX = FX;

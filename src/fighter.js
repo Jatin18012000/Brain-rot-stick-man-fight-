@@ -32,6 +32,7 @@
     this.colors = cfg.colors || { body: '#eaeaea', accent: '#6ea8ff' };
     this.scale = cfg.scale || 1;
     this.gear = cfg.gear || null;          // equipped ids, for rendering
+    this.character = cfg.character || null; // palette, build, soft parts
     this.stats = cfg.stats;                // combat stats block
     this.specials = cfg.specials || [];    // available special defs
     this.maxHp = this.stats.maxHp;
@@ -386,18 +387,25 @@
     if (this.state === 'attack' && this.move && !this.hitUsed) {
       const mv = this.move;
       if (this.frame >= mv.startup && this.frame < mv.startup + mv.active) {
-        out.push({ box: this.toWorld(mv.box), data: mv, key: 'normal' });
+        out.push({ box: this.reachBox(mv.box), data: mv, key: 'normal' });
       }
     } else if (this.state === 'special' && this.special) {
       const sp = this.special;
       sp.hits.forEach((h, i) => {
         if (this.specialHitFlags[i]) return;
         if (this.frame >= h.f && this.frame < h.f + h.active) {
-          out.push({ box: this.toWorld(h.box), data: Object.assign({ special: sp, name: sp.name }, h), key: i });
+          out.push({ box: this.reachBox(h.box), data: Object.assign({ special: sp, name: sp.name }, h), key: i });
         }
       });
     }
     return out;
+  };
+
+  /* Character reach extends every attack box forward — the whole identity of a
+   * long-limbed fighter is winning trades a short one cannot reach. */
+  Fighter.prototype.reachBox = function (b) {
+    const reach = this.stats.reach || 0;
+    return this.toWorld(reach ? { x: b.x, y: b.y, w: b.w + reach, h: b.h } : b);
   };
 
   Fighter.prototype.markHitUsed = function (key) {

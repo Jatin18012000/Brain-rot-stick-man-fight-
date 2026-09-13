@@ -35,7 +35,13 @@
   function handle(action, arg, btn) {
     const G = root.ST.Game;
     switch (action) {
-      case 'play': UI.show('tower'); break;
+      case 'play': UI.show(Progress.data.character ? 'tower' : 'select'); break;
+      case 'select': UI.show('select'); break;
+      case 'pick':
+        Progress.chooseCharacter(arg);
+        Audio.play('levelUp');
+        UI.show('tower');
+        break;
       case 'tower': UI.show('tower'); break;
       case 'shop': UI.show('shop'); break;
       case 'moves': UI.show('moves'); break;
@@ -113,8 +119,11 @@
     document.getElementById('app').classList.toggle('fighting', screen === 'fight');
     UI.el.scrollTop = 0;
 
+    if (UI._portraitRAF) { cancelAnimationFrame(UI._portraitRAF); UI._portraitRAF = null; }
+
     switch (screen) {
       case 'title': UI.el.innerHTML = titleScreen(); break;
+      case 'select': UI.el.innerHTML = selectScreen(); break;
       case 'tower': UI.el.innerHTML = towerScreen(); break;
       case 'shop': UI.el.innerHTML = shopScreen(); break;
       case 'moves': UI.el.innerHTML = movesScreen(); break;
@@ -125,6 +134,7 @@
       default: break;
     }
     if (screen === 'tower') scrollToCurrentFloor();
+    if (screen === 'select') startPortraits();
   };
 
   function topBar(active) {
@@ -142,6 +152,7 @@
           <button class="chip ${active === 'tower' ? 'on' : ''}" data-ui="tower">TOWER</button>
           <button class="chip ${active === 'shop' ? 'on' : ''}" data-ui="shop">SHOP</button>
           <button class="chip ${active === 'moves' ? 'on' : ''}" data-ui="moves">MOVES</button>
+          <button class="chip" data-ui="select">FIGHTER</button>
           <button class="chip ${active === 'settings' ? 'on' : ''}" data-ui="settings">⚙</button>
         </div>
       </div>
@@ -161,6 +172,7 @@
         <div class="title-buttons">
           <button class="big primary" data-ui="play">${started ? 'CONTINUE — FLOOR ' + d.floor : 'START CLIMBING'}</button>
           <button class="big" data-ui="howto">HOW TO PLAY</button>
+          <button class="big" data-ui="select">CHOOSE FIGHTER</button>
           <button class="big" data-ui="moves">MOVES &amp; COMBOS</button>
           <button class="big" data-ui="settings">SETTINGS</button>
           <button class="big ghost" data-ui="install">INSTALL ON PHONE / LAPTOP</button>
@@ -172,6 +184,78 @@
           <span>Best combo <b>${d.stats.bestCombo}</b></span>
         </div>` : ''}
       </div>`;
+  }
+
+  /* Character select. The cards draw the actual fighters, so what you preview
+   * is exactly what walks into the arena. */
+  function selectScreen() {
+    const chosen = Progress.data.character;
+    const cards = root.ST.Characters.CHARACTERS.map((c) => {
+      const bars = [
+        ['POWER', c.stats.atk],
+        ['SPEED', c.stats.spd],
+        ['HEALTH', c.stats.hp],
+        ['REACH', 1 + c.stats.reach / 30],
+      ].map(([label, v]) => {
+        const pct = U.clamp((v - 0.82) / 0.36, 0.06, 1) * 100;
+        return `<div class="cs-stat"><span>${label}</span><i><b style="width:${pct.toFixed(0)}%"></b></i></div>`;
+      }).join('');
+      const sig = c.signature
+        ? `<div class="cs-sig"><span>SIGNATURE</span> <b>${esc(c.signature.name)}</b>
+             <div class="cs-seq">${c.signature.seq.map((k) => `<i class="key ${k}">${k}</i>`).join('<b>→</b>')}</div></div>`
+        : '<div class="cs-sig"><span>SIGNATURE</span> <b>None — every combo, no bias</b></div>';
+      return `
+        <div class="cs-card ${chosen === c.id ? 'on' : ''}" style="--acc:${c.colors.accent}">
+          <canvas class="cs-portrait" data-char="${c.id}" width="240" height="340"></canvas>
+          <div class="cs-body">
+            <div class="cs-role">${esc(c.role)}</div>
+            <div class="cs-name">${esc(c.name)}</div>
+            <div class="cs-title">${esc(c.title)}</div>
+            <p class="cs-tag">${esc(c.tagline)}</p>
+            <div class="cs-stats">${bars}</div>
+            ${sig}
+            <p class="cs-blurb">${esc(c.blurb)}</p>
+            <button class="big ${chosen === c.id ? '' : 'primary'}" data-ui="pick" data-arg="${c.id}">
+              ${chosen === c.id ? 'SELECTED — KEEP CLIMBING' : 'CHOOSE ' + esc(c.name.toUpperCase())}
+            </button>
+          </div>
+        </div>`;
+    }).join('');
+
+    return `${Progress.data.character ? topBar('') : ''}
+      <div class="screen select">
+        <h2 class="cs-head">CHOOSE YOUR FIGHTER</h2>
+        <p class="note">Same tower, same rules, same gear and training. They differ in how they
+          get it done — and each one brings a signature combo that nobody else can throw.
+          You can switch fighter any time; your floors, coins and gear stay with you.</p>
+        <div class="cs-grid">${cards}</div>
+      </div>`;
+  }
+
+  function startPortraits() {
+    const canvases = Array.prototype.slice.call(document.querySelectorAll('.cs-portrait'));
+    if (!canvases.length) return;
+    // Match the backing store to the CSS box, or the fighters come out squashed.
+    const dpr = Math.min(root.devicePixelRatio || 1, 2);
+    const ctxs = canvases.map((cv) => {
+      const r = cv.getBoundingClientRect();
+      cv.width = Math.max(1, Math.round(r.width * dpr));
+      cv.height = Math.max(1, Math.round(r.height * dpr));
+      return {
+        ctx: cv.getContext('2d'),
+        ch: root.ST.Characters.get(cv.dataset.char),
+        w: cv.width, h: cv.height,
+      };
+    });
+    let last = performance.now();
+    const tick = (now) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const t = now / 1000;
+      ctxs.forEach((c) => root.ST.Render.drawPortrait(c.ctx, c.ch, t, c.w, c.h, dt));
+      UI._portraitRAF = requestAnimationFrame(tick);
+    };
+    UI._portraitRAF = requestAnimationFrame(tick);
   }
 
   function towerScreen() {
@@ -356,13 +440,13 @@
       ['Tap ◀◀ / ▶▶', 'Dash'],
     ].map(([k, v]) => `<div class="mv"><span class="mv-in">${esc(k)}</span><span class="mv-de">${esc(v)}</span></div>`).join('');
 
-    const combos = Moves.SPECIALS.map((sp) => {
+    const combos = Progress.allSpecials().map((sp) => {
       const unlocked = sp.unlock <= lvl;
       const seq = sp.seq.map((s) => `<i class="key ${s}">${s === 'P1' ? 'P1' : s === 'P2' ? 'P2' : s === 'K' ? 'K' : s === 'D' ? '▼' : s === 'F' ? '▶' : '◀'}</i>`).join('<b>→</b>');
       return `
-        <div class="combo ${unlocked ? '' : 'locked'} ${sp.ultimate ? 'ult' : ''}">
+        <div class="combo ${unlocked ? '' : 'locked'} ${sp.ultimate ? 'ult' : ''} ${sp.id.indexOf('sig') === 0 ? 'sig' : ''}">
           <div class="cb-head">
-            <span class="cb-name">${esc(sp.name)}${sp.ultimate ? ' ★' : ''}</span>
+            <span class="cb-name">${esc(sp.name)}${sp.ultimate ? ' ★' : ''}${sp.id.indexOf('sig') === 0 ? ' <em>SIGNATURE</em>' : ''}</span>
             <span class="cb-cost">${sp.cost ? sp.cost + ' rage' : 'free'}</span>
           </div>
           <div class="cb-seq">${seq}</div>

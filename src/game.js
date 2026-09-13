@@ -89,10 +89,12 @@
     const stats = Progress.combat();
 
     const gear = buildGearVisual();
+    const character = Progress.character();
     const player = new Fighter({
-      name: 'You', isPlayer: true, x: 300, facing: 1,
-      colors: { body: '#f2f4f8', accent: '#6ea8ff' },
-      stats: stats, gear: gear, scale: 1,
+      name: character.name, isPlayer: true, x: 300, facing: 1,
+      colors: character.colors,
+      character: character,
+      stats: stats, gear: gear, scale: character.build.scale,
       specials: Progress.unlockedSpecials(),
     });
     player.y = BOUNDS.ground;
@@ -136,6 +138,8 @@
     Game.t = 0;
     Game.paused = false;
     Game.hint = null; Game.hintT = 0;
+    Game.specialList = Progress.allSpecials().slice()
+      .sort((a, b) => b.seq.length - a.seq.length);
     Game.specialBanner = null; Game.specialBannerT = 0;
     R.FX.clear();
 
@@ -191,6 +195,7 @@
     if (!Game.running) return;
     const raw = Math.min(0.05, (now - Game.last) / 1000);
     Game.last = now;
+    Game.frameDt = raw;
     Input.update();
 
     if (Game.screen === 'fight' && !Game.paused) {
@@ -385,7 +390,7 @@
     const tokens = Input.recentTokens(p.facing);
     if (!tokens.length) return null;
     const buttonsOnly = tokens.filter((t) => t === 'P1' || t === 'P2' || t === 'K');
-    const list = Moves.SPECIALS_BY_LENGTH;
+    const list = Game.specialList || Moves.SPECIALS_BY_LENGTH;
     for (let i = 0; i < list.length; i++) {
       const sp = list[i];
       if (sp.unlock > Progress.data.level) continue;
@@ -641,7 +646,7 @@
     R.drawBackground(ctx, Game.bossInfo.tier, Game.t, Game.shakeX);
 
     const order = Game.player.y <= Game.boss.y ? [Game.boss, Game.player] : [Game.player, Game.boss];
-    order.forEach((f) => R.drawFighter(ctx, f, { debug: Game.settings.debug }));
+    order.forEach((f) => R.drawFighter(ctx, f, { debug: Game.settings.debug, dt: Game.frameDt }));
 
     Game.projectiles.forEach((pr) => R.drawProjectile(ctx, pr, Game.t));
     R.drawFx(ctx);
@@ -689,7 +694,11 @@
     demo.y = R.GROUND_Y - (cycle >= 4.4 && cycle < 5.4 ? Math.sin((cycle - 4.4) * Math.PI) * 90 : 0);
     demo.x = 170 + Math.sin(t * 0.6) * 40;
     demo.gear = buildGearVisual();
-    R.drawFighter(ctx, demo, {});
+    const ch = Progress.character();
+    demo.character = ch;
+    demo.colors = ch.colors;
+    demo.scale = ch.build.scale;
+    R.drawFighter(ctx, demo, { dt: Game.frameDt });
     ctx.fillStyle = 'rgba(4,6,12,0.55)';
     ctx.fillRect(0, 0, R.W, R.H);
   }

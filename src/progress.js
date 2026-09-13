@@ -99,6 +99,7 @@
   function freshSave() {
     return {
       v: 1,
+      character: null,        // chosen on first play
       floor: 1,
       highest: 1,
       cleared: 0,
@@ -157,16 +158,21 @@
       const crit = Math.min(0.75, d.train.crit * 0.02 + g.crit / 100);
       const critDmg = 1.6 + g.critdmg / 100;
       const rageMul = (1 + d.train.rage * 0.08) * (1 + g.rage / 100);
+
+      // The chosen character tilts the same numbers rather than replacing them,
+      // so gear and training mean the same thing whoever you pick.
+      const cs = root.ST.Characters.get(d.character).stats;
       return {
-        maxHp: Math.round(maxHp),
-        atkMul,
+        maxHp: Math.round(maxHp * cs.hp),
+        atkMul: atkMul * cs.atk,
         def,
         dr: def / (def + 110),          // damage reduction 0..1
-        spdMul,
-        aspdMul,
-        crit,
+        spdMul: spdMul * cs.spd,
+        aspdMul: aspdMul * cs.aspd,
+        crit: Math.min(0.8, crit + cs.crit),
         critDmg,
-        rageMul,
+        rageMul: rageMul * cs.rage,
+        reach: cs.reach || 0,
         lifesteal: g.lifesteal / 100,
         coinMul: 1 + g.coin / 100,
         tonics: 1 + d.train.pot,
@@ -177,7 +183,8 @@
     power() {
       const c = P.combat();
       return Math.round(
-        c.maxHp * 0.45 + c.atkMul * 140 + c.def * 1.6 + c.crit * 120 + c.spdMul * 40 + P.data.level * 6
+        c.maxHp * 0.45 + c.atkMul * 140 + c.def * 1.6 + c.crit * 120 + c.spdMul * 40
+        + c.reach * 3 + P.data.level * 6
       );
     },
 
@@ -196,12 +203,22 @@
       return gained;
     },
 
-    /* Combos unlock with level so floor 1 isn't a wall of options. */
+    /* Combos unlock with level so floor 1 isn't a wall of options. The chosen
+     * character's signature is always in the list — it is who they are. */
+    allSpecials() {
+      return root.ST.Characters.specialsFor(P.data.character);
+    },
     unlockedSpecials() {
-      return root.ST.Moves.SPECIALS.filter((s) => s.unlock <= P.data.level);
+      return P.allSpecials().filter((s) => s.unlock <= P.data.level);
     },
     newlyUnlockedAt(level) {
-      return root.ST.Moves.SPECIALS.filter((s) => s.unlock === level);
+      return P.allSpecials().filter((s) => s.unlock === level);
+    },
+
+    character() { return root.ST.Characters.get(P.data.character); },
+    chooseCharacter(id) {
+      P.data.character = id;
+      P.save();
     },
 
     canBuyItem(item) {

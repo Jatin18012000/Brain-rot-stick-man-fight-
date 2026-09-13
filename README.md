@@ -79,6 +79,32 @@ on an iPad and it just works. Every key is remappable in **Settings**.
 
 ---
 
+## Characters
+
+You pick a fighter and climb with them. Same tower, same rules, same gear and
+training — what changes is how you get it done, and each one carries a
+signature combo nobody else can throw. You can switch fighter any time; floors,
+coins and gear stay with you.
+
+| Fighter | Role | Plays like | Signature |
+| --- | --- | --- | --- |
+| **The Stickman** | All-rounder | Every stat dead average, every option open | — |
+| **BLAZE** | Rushdown | Fastest walk and recovery, thinnest health bar, builds rage quickest | Ember Rush · `K → P1 → P1` |
+| **VESPER** | Zoner / Power | Every attack box 9 units wider, heavier hits, slower | Toll the Bell · `P2 → P1 → K` |
+
+Characters are pure data in `src/characters.js`: palette, build, stat
+modifiers, stance, the soft parts that trail behind them, and their signature
+combo. Adding one is editing that file — nothing else knows their details.
+
+**Soft parts.** Ponytails, sashes and coat tails are verlet ropes hung off the
+skeleton joints the renderer already computes, so the body stops and the hair
+does not. That lag is what stops a character reading as a plain stick figure.
+Each one declares its joint, length, stiffness, gravity and rest direction.
+
+`tools/check-combos.mjs` validates every character's combo set separately,
+since a signature has to coexist with the shared list without stealing its
+inputs. `tools/balance.mjs` runs the full 100-floor climb for each of them.
+
 ## How the fighting works
 
 Standard fighting-game rules, kept honest: every attack has **startup**,
@@ -160,6 +186,7 @@ src/util.js             maths, seeded RNG, storage
 src/audio.js            every sound, synthesised with WebAudio
 src/input.js            touch + keyboard + gamepad -> one action set
 src/moves.js            frame data and combo recipes
+src/characters.js       playable characters: palette, build, soft parts
 src/floors.js           the 100 bosses
 src/progress.js         save data, shop catalogue, economy
 src/fighter.js          physics, state machine, hit/hurt boxes
@@ -179,6 +206,7 @@ runs straight off the filesystem.
 ```bash
 node tools/check-combos.mjs        # prove every combo is performable
 node tools/balance.mjs --all       # simulate the 100-floor economy
+node tools/balance.mjs --char=blaze  # ...for one character
 node tools/build-standalone.mjs    # -> dist/stickman-tower.html
 python3 tools/make-icons.py        # regenerate the app icons
 ```

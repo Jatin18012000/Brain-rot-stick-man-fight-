@@ -20,12 +20,10 @@ const win = {
     removeItem: (k) => store.delete(k),
   },
 };
-for (const f of ['util.js', 'moves.js', 'floors.js', 'progress.js']) {
+for (const f of ['util.js', 'moves.js', 'characters.js', 'floors.js', 'progress.js']) {
   new Function('window', readFileSync(join(root, 'src', f), 'utf8'))(win);
 }
-const { Progress, Shop, Floors } = win.ST;
-
-Progress.data.coins = 0;
+const { Progress, Shop, Floors, Characters } = win.ST;
 
 function bestPurchase() {
   let best = null;
@@ -66,8 +64,22 @@ function spend() {
 }
 
 const all = process.argv.includes('--all');
+const onlyChar = (process.argv.find((a) => a.startsWith('--char=')) || '').split('=')[1];
+const roster = Characters.CHARACTERS.filter((c) => !onlyChar || c.id === onlyChar);
+
+let anyProblem = false;
+for (const character of roster) {
+  console.log(`\n=== ${character.name} (${character.role}) ===`);
+  runClimb(character.id);
+}
+process.exit(anyProblem ? 1 : 0);
+
+function runClimb(characterId) {
 const rows = [];
 let worst = { ratio: Infinity, floor: 0 };
+Progress.reset();
+Progress.data.coins = 0;
+Progress.data.character = characterId;
 
 for (let floor = 1; floor <= 100; floor++) {
   spend();                                   // shop before the fight
@@ -115,5 +127,8 @@ const fastest = rows.reduce((a, b) => (a.ttkBoss < b.ttkBoss ? a : b));
 const slowest = rows.reduce((a, b) => (a.ttkBoss > b.ttkBoss ? a : b));
 console.log(`quickest kill ${fastest.ttkBoss.toFixed(0)}s (floor ${fastest.floor}), `
   + `slowest ${slowest.ttkBoss.toFixed(0)}s (floor ${slowest.floor})`);
-console.log('note: these are damage-model estimates; real fights run longer once '
+if (spikes.length || tooLong.length || tooFragile.length) anyProblem = true;
+}
+
+console.log('\nnote: these are damage-model estimates; real fights run longer once '
   + 'whiffs, blocking and knockdowns are counted, which is why wardens get a 120s clock.');
