@@ -444,3 +444,4 @@ button { font-family: inherit; cursor: pointer; }
 
 .cs-quote { font-size: 13px; font-style: italic; color: var(--text); margin: 2px 0 0; line-height: 1.4; }
 .cs-portrait { height: auto; aspect-ratio: 240 / 260; }
+.fl-name em.rival { background: var(--gold); color: #1a1200; }

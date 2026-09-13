@@ -222,6 +222,7 @@
 
     Game.screen = 'fight';
     root.ST.UI.show('fight');
+    Audio.setVoice(character.voice);
     Audio.startMusic(info.tierIndex);
   };
 

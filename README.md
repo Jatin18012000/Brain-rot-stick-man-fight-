@@ -118,6 +118,10 @@ stiffness, gravity and damping straight from the sheet.
 **Reach is mechanical, not cosmetic.** VANE's `reach: 9` widens every attack
 box she throws, so she wins trades a short-limbed fighter cannot reach.
 
+**They throw differently too.** RAZA drives her whole body in behind a short,
+compact strike; VANE stays upright and lets the arm do the travelling. Impacts
+are voiced to match — sharp and quick against low and long.
+
 **Gear takes the character's palette.** Equipment tier reads through size and
 shape, and low/mid/high bands swap whole sets of parts — RAZA gains gold cuffs,
 greaves and a crown ring; VANE gains pauldrons, a halo, a hip plate and finally

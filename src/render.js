@@ -200,21 +200,52 @@
       const m = f.move;
       const fr = f.frame;
       const key = attackPoses(m.id, f);
+      let out, hitness;
       if (fr < m.startup) {
-        return lerpPose(key.idle, key.wind, U.easeOut(fr / Math.max(1, m.startup)));
+        const k = U.easeOut(fr / Math.max(1, m.startup));
+        out = lerpPose(key.idle, key.wind, k);
+        hitness = k * 0.3;
+      } else if (fr < m.startup + m.active) {
+        const k = U.easeOut((fr - m.startup) / Math.max(1, m.active));
+        out = lerpPose(key.wind, key.hit, k);
+        hitness = 0.3 + k * 0.7;
+      } else {
+        const rt = U.ease(U.clamp((fr - m.startup - m.active) / Math.max(1, m.recovery), 0, 1));
+        out = lerpPose(key.hit, key.idle, rt);
+        hitness = 1 - rt;
       }
-      if (fr < m.startup + m.active) {
-        return lerpPose(key.wind, key.hit, U.easeOut((fr - m.startup) / Math.max(1, m.active)));
-      }
-      const rt = (fr - m.startup - m.active) / Math.max(1, m.recovery);
-      return lerpPose(key.hit, key.idle, U.ease(U.clamp(rt, 0, 1)));
+      return applyStrike(f, out, m, hitness);
     }
 
     if (f.state === 'special' && f.special) {
-      return specialPose(f);
+      const sp = f.special;
+      const prog = U.clamp(f.frame / Math.max(1, sp.duration), 0, 1);
+      // peak near the middle of the routine, settle at the end
+      const hitness = prog < 0.7 ? U.clamp(prog / 0.4, 0, 1) : U.clamp((1 - prog) / 0.3, 0, 1);
+      return applyStrike(f, specialPose(f), null, hitness);
     }
 
     return POSE.idle;
+  }
+
+  /* How a fighter throws, as opposed to how they stand. RAZA drives her whole
+   * body in behind a compact strike; VANE stays upright and reaches. Cheap
+   * modifiers on the shared attack poses, which is enough to read at a glance. */
+  const ARM_MOVES = ['jab', 'cross', 'lowJab', 'bodyBlow', 'airPunch', 'airCross', 'lunge'];
+
+  function applyStrike(f, p, move, hitness) {
+    const st = f.character && f.character.strikes;
+    if (!st) return p;
+    const usesArm = !move || ARM_MOVES.indexOf(move.id) !== -1;
+    p.lean += (st.leanOnHit || 0) * hitness;
+    if (usesArm) {
+      if (st.armLen) p.armLen = (p.armLen === undefined ? 1 : p.armLen) * U.lerp(1, st.armLen, hitness);
+      p.armF[0] += (st.extend || 0) * hitness;
+    } else {
+      if (st.legLen) p.legLen = (p.legLen === undefined ? 1 : p.legLen) * U.lerp(1, st.legLen, hitness);
+      p.legF[0] += (st.extend || 0) * hitness;
+    }
+    return p;
   }
 
   function attackPoses(id, f) {
@@ -241,6 +272,7 @@
     const sp = f.special;
     const fr = f.frame;
     const hits = sp.hits || [];
+    const clone = (q) => lerpPose(q, q, 0);
     if (!hits.length) {
       // Projectile specials: crouch, charge, thrust.
       const t = fr / sp.duration;
@@ -262,17 +294,17 @@
     };
     if (!prev) {
       const t = U.clamp(fr / Math.max(1, next.f), 0, 1);
-      return lerpPose(POSE.idle, POSE.jabWind, t);
+      return lerpPose(characterIdle(f), POSE.jabWind, t);
     }
     const idx = hits.indexOf(prev);
-    const cur = poseOfHit(prev, idx);
+    const cur = clone(poseOfHit(prev, idx));
     if (next) {
       const t = U.clamp((fr - prev.f) / Math.max(1, next.f - prev.f), 0, 1);
       const mid = idx % 2 === 0 ? POSE.crossWind : POSE.jabWind;
       return t < 0.5 ? lerpPose(cur, mid, t * 2) : lerpPose(mid, poseOfHit(next, idx + 1), (t - 0.5) * 2);
     }
     const t = U.clamp((fr - prev.f) / Math.max(1, sp.duration - prev.f), 0, 1);
-    return lerpPose(cur, POSE.idle, U.ease(t));
+    return lerpPose(cur, characterIdle(f), U.ease(t));
   }
 
   // ------------------------------------------------------------- fx system

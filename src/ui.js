@@ -263,8 +263,11 @@
     const d = Progress.data;
     const myPower = Progress.power();
     let rows = '';
+    const Campaign = root.ST.Campaign;
+    const myRival = root.ST.Characters.get(Campaign.rivalOf(d.character || 'classic'));
     for (let f = 100; f >= 1; f--) {
       const info = Floors.get(f);
+      const isRival = Campaign.isRivalFloor(f);
       const cleared = f <= d.cleared;
       const current = f === d.highest && !cleared;
       const locked = f > d.highest;
@@ -282,8 +285,10 @@
         <div class="floor ${cleared ? 'cleared' : ''} ${current ? 'current' : ''} ${locked ? 'locked' : ''}" id="floor-${f}">
           <div class="fl-num">${f}</div>
           <div class="fl-body">
-            <div class="fl-name">${locked ? '???' : esc(info.name)}${info.warden ? ' <em>WARDEN</em>' : ''}${info.final ? ' <em>FINAL</em>' : ''}</div>
-            <div class="fl-meta">${locked ? 'Locked' : esc(info.title) + ' · ' + info.arch + ' · ' + U.comma(info.hp) + ' HP'}</div>
+            <div class="fl-name">${locked ? '???' : esc(isRival ? myRival.name : info.name)}${isRival ? ' <em class="rival">RIVAL</em>' : info.warden ? ' <em>WARDEN</em>' : ''}${info.final ? ' <em>FINAL</em>' : ''}</div>
+            <div class="fl-meta">${locked ? 'Locked'
+        : isRival ? esc(myRival.title) + ' · ' + esc(myRival.role) + ' · she came down to meet you'
+          : esc(info.title) + ' · ' + info.arch + ' · ' + U.comma(info.hp) + ' HP'}</div>
           </div>
           <div class="fl-right">
             ${locked ? '<span class="lock">🔒</span>'

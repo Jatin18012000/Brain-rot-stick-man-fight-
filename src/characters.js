@@ -81,6 +81,9 @@
         },
       },
 
+      // Drives her whole body in behind a short strike.
+      strikes: { leanOnHit: -9, extend: 5, armLen: 0.97, legLen: 0.97 },
+
       attachments: [
         {
           id: 'tailA', type: 'chain', joint: 'head', origin: [3, 5],
@@ -178,6 +181,7 @@
         nameColor: '#2B0F1C',
       },
 
+      voice: { pitch: 1.18, length: 0.85 },   // sharp and quick
       blurb: 'Fastest walk and recovery in the game, thinnest health bar, quickest rage build. '
         + 'Her signature opens with a kick, so it comes out of neutral when a punch string is read.',
     },
@@ -226,6 +230,9 @@
           legF: [19, -8], legB: [-19, 8],
         },
       },
+
+      // Stays upright and reaches; the arm does the travelling, not the torso.
+      strikes: { leanOnHit: 2, extend: 9, armLen: 1.08, legLen: 1.06 },
 
       attachments: [
         {
@@ -312,6 +319,7 @@
         nameColor: '#0B2430',
       },
 
+      voice: { pitch: 0.84, length: 1.25 },   // low and long
       blurb: 'Every attack box is nine units wider than anyone else\'s, so she wins trades she '
         + 'has no business winning. Slow enough that a whiff is a real invitation.',
     },
@@ -363,6 +371,7 @@
         nameColor: '#06121F',
       },
 
+      voice: { pitch: 1, length: 1 },
       blurb: 'No stat bias and no signature — every shared combo, thrown at face value. '
         + 'The cleanest read on what the tower actually asks of you.',
     },

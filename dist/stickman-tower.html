@@ -461,6 +461,7 @@ button { font-family: inherit; cursor: pointer; }
 
 .cs-quote { font-size: 13px; font-style: italic; color: var(--text); margin: 2px 0 0; line-height: 1.4; }
 .cs-portrait { height: auto; aspect-ratio: 240 / 260; }
+.fl-name em.rival { background: var(--gold); color: #1a1200; }
 
 </style>
 </head>
@@ -680,12 +681,21 @@ button { font-family: inherit; cursor: pointer; }
     src.start(t); src.stop(t + dur + 0.02);
   }
 
+  /* Impacts are voiced per fighter: a rushdown lands sharp and quick, a heavy
+   * zoner lands low and long. Set by the game when a fight starts. */
+  Audio.voice = { pitch: 1, length: 1 };
+  Audio.setVoice = function (v) {
+    Audio.voice = { pitch: (v && v.pitch) || 1, length: (v && v.length) || 1 };
+  };
+  const vp = () => Audio.voice.pitch;
+  const vl = () => Audio.voice.length;
+
   const SFX = {
-    whiffLight() { burst(0.09, 0.10, 2600, 1.2); },
-    whiffHeavy() { burst(0.16, 0.15, 1500, 0.9); },
-    hitLight() { burst(0.10, 0.35, 1800, 0.8); tone(150, 0.11, 'square', 0.22, 60); },
-    hitHeavy() { burst(0.18, 0.5, 900, 0.7); tone(96, 0.2, 'square', 0.34, 42); },
-    hitSpecial() { burst(0.26, 0.55, 600, 0.6); tone(140, 0.3, 'sawtooth', 0.3, 48); tone(320, 0.22, 'square', 0.16, 90); },
+    whiffLight() { burst(0.09 * vl(), 0.10, 2600 * vp(), 1.2); },
+    whiffHeavy() { burst(0.16 * vl(), 0.15, 1500 * vp(), 0.9); },
+    hitLight() { burst(0.10 * vl(), 0.35, 1800 * vp(), 0.8); tone(150 * vp(), 0.11 * vl(), 'square', 0.22, 60 * vp()); },
+    hitHeavy() { burst(0.18 * vl(), 0.5, 900 * vp(), 0.7); tone(96 * vp(), 0.2 * vl(), 'square', 0.34, 42 * vp()); },
+    hitSpecial() { burst(0.26 * vl(), 0.55, 600 * vp(), 0.6); tone(140 * vp(), 0.3 * vl(), 'sawtooth', 0.3, 48 * vp()); tone(320 * vp(), 0.22 * vl(), 'square', 0.16, 90 * vp()); },
     block() { burst(0.08, 0.3, 5200, 4); tone(680, 0.06, 'square', 0.12, 520); },
     guardBreak() { burst(0.3, 0.4, 2200, 2); tone(220, 0.4, 'sawtooth', 0.24, 70); },
     jump() { tone(300, 0.13, 'sine', 0.14, 620); },
@@ -1466,6 +1476,9 @@ button { font-family: inherit; cursor: pointer; }
         },
       },
 
+      // Drives her whole body in behind a short strike.
+      strikes: { leanOnHit: -9, extend: 5, armLen: 0.97, legLen: 0.97 },
+
       attachments: [
         {
           id: 'tailA', type: 'chain', joint: 'head', origin: [3, 5],
@@ -1563,6 +1576,7 @@ button { font-family: inherit; cursor: pointer; }
         nameColor: '#2B0F1C',
       },
 
+      voice: { pitch: 1.18, length: 0.85 },   // sharp and quick
       blurb: 'Fastest walk and recovery in the game, thinnest health bar, quickest rage build. '
         + 'Her signature opens with a kick, so it comes out of neutral when a punch string is read.',
     },
@@ -1611,6 +1625,9 @@ button { font-family: inherit; cursor: pointer; }
           legF: [19, -8], legB: [-19, 8],
         },
       },
+
+      // Stays upright and reaches; the arm does the travelling, not the torso.
+      strikes: { leanOnHit: 2, extend: 9, armLen: 1.08, legLen: 1.06 },
 
       attachments: [
         {
@@ -1697,6 +1714,7 @@ button { font-family: inherit; cursor: pointer; }
         nameColor: '#0B2430',
       },
 
+      voice: { pitch: 0.84, length: 1.25 },   // low and long
       blurb: 'Every attack box is nine units wider than anyone else\'s, so she wins trades she '
         + 'has no business winning. Slow enough that a whiff is a real invitation.',
     },
@@ -1748,6 +1766,7 @@ button { font-family: inherit; cursor: pointer; }
         nameColor: '#06121F',
       },
 
+      voice: { pitch: 1, length: 1 },
       blurb: 'No stat bias and no signature — every shared combo, thrown at face value. '
         + 'The cleanest read on what the tower actually asks of you.',
     },
@@ -3495,21 +3514,52 @@ button { font-family: inherit; cursor: pointer; }
       const m = f.move;
       const fr = f.frame;
       const key = attackPoses(m.id, f);
+      let out, hitness;
       if (fr < m.startup) {
-        return lerpPose(key.idle, key.wind, U.easeOut(fr / Math.max(1, m.startup)));
+        const k = U.easeOut(fr / Math.max(1, m.startup));
+        out = lerpPose(key.idle, key.wind, k);
+        hitness = k * 0.3;
+      } else if (fr < m.startup + m.active) {
+        const k = U.easeOut((fr - m.startup) / Math.max(1, m.active));
+        out = lerpPose(key.wind, key.hit, k);
+        hitness = 0.3 + k * 0.7;
+      } else {
+        const rt = U.ease(U.clamp((fr - m.startup - m.active) / Math.max(1, m.recovery), 0, 1));
+        out = lerpPose(key.hit, key.idle, rt);
+        hitness = 1 - rt;
       }
-      if (fr < m.startup + m.active) {
-        return lerpPose(key.wind, key.hit, U.easeOut((fr - m.startup) / Math.max(1, m.active)));
-      }
-      const rt = (fr - m.startup - m.active) / Math.max(1, m.recovery);
-      return lerpPose(key.hit, key.idle, U.ease(U.clamp(rt, 0, 1)));
+      return applyStrike(f, out, m, hitness);
     }
 
     if (f.state === 'special' && f.special) {
-      return specialPose(f);
+      const sp = f.special;
+      const prog = U.clamp(f.frame / Math.max(1, sp.duration), 0, 1);
+      // peak near the middle of the routine, settle at the end
+      const hitness = prog < 0.7 ? U.clamp(prog / 0.4, 0, 1) : U.clamp((1 - prog) / 0.3, 0, 1);
+      return applyStrike(f, specialPose(f), null, hitness);
     }
 
     return POSE.idle;
+  }
+
+  /* How a fighter throws, as opposed to how they stand. RAZA drives her whole
+   * body in behind a compact strike; VANE stays upright and reaches. Cheap
+   * modifiers on the shared attack poses, which is enough to read at a glance. */
+  const ARM_MOVES = ['jab', 'cross', 'lowJab', 'bodyBlow', 'airPunch', 'airCross', 'lunge'];
+
+  function applyStrike(f, p, move, hitness) {
+    const st = f.character && f.character.strikes;
+    if (!st) return p;
+    const usesArm = !move || ARM_MOVES.indexOf(move.id) !== -1;
+    p.lean += (st.leanOnHit || 0) * hitness;
+    if (usesArm) {
+      if (st.armLen) p.armLen = (p.armLen === undefined ? 1 : p.armLen) * U.lerp(1, st.armLen, hitness);
+      p.armF[0] += (st.extend || 0) * hitness;
+    } else {
+      if (st.legLen) p.legLen = (p.legLen === undefined ? 1 : p.legLen) * U.lerp(1, st.legLen, hitness);
+      p.legF[0] += (st.extend || 0) * hitness;
+    }
+    return p;
   }
 
   function attackPoses(id, f) {
@@ -3536,6 +3586,7 @@ button { font-family: inherit; cursor: pointer; }
     const sp = f.special;
     const fr = f.frame;
     const hits = sp.hits || [];
+    const clone = (q) => lerpPose(q, q, 0);
     if (!hits.length) {
       // Projectile specials: crouch, charge, thrust.
       const t = fr / sp.duration;
@@ -3557,17 +3608,17 @@ button { font-family: inherit; cursor: pointer; }
     };
     if (!prev) {
       const t = U.clamp(fr / Math.max(1, next.f), 0, 1);
-      return lerpPose(POSE.idle, POSE.jabWind, t);
+      return lerpPose(characterIdle(f), POSE.jabWind, t);
     }
     const idx = hits.indexOf(prev);
-    const cur = poseOfHit(prev, idx);
+    const cur = clone(poseOfHit(prev, idx));
     if (next) {
       const t = U.clamp((fr - prev.f) / Math.max(1, next.f - prev.f), 0, 1);
       const mid = idx % 2 === 0 ? POSE.crossWind : POSE.jabWind;
       return t < 0.5 ? lerpPose(cur, mid, t * 2) : lerpPose(mid, poseOfHit(next, idx + 1), (t - 0.5) * 2);
     }
     const t = U.clamp((fr - prev.f) / Math.max(1, sp.duration - prev.f), 0, 1);
-    return lerpPose(cur, POSE.idle, U.ease(t));
+    return lerpPose(cur, characterIdle(f), U.ease(t));
   }
 
   // ------------------------------------------------------------- fx system
@@ -4915,8 +4966,11 @@ button { font-family: inherit; cursor: pointer; }
     const d = Progress.data;
     const myPower = Progress.power();
     let rows = '';
+    const Campaign = root.ST.Campaign;
+    const myRival = root.ST.Characters.get(Campaign.rivalOf(d.character || 'classic'));
     for (let f = 100; f >= 1; f--) {
       const info = Floors.get(f);
+      const isRival = Campaign.isRivalFloor(f);
       const cleared = f <= d.cleared;
       const current = f === d.highest && !cleared;
       const locked = f > d.highest;
@@ -4934,8 +4988,10 @@ button { font-family: inherit; cursor: pointer; }
         <div class="floor ${cleared ? 'cleared' : ''} ${current ? 'current' : ''} ${locked ? 'locked' : ''}" id="floor-${f}">
           <div class="fl-num">${f}</div>
           <div class="fl-body">
-            <div class="fl-name">${locked ? '???' : esc(info.name)}${info.warden ? ' <em>WARDEN</em>' : ''}${info.final ? ' <em>FINAL</em>' : ''}</div>
-            <div class="fl-meta">${locked ? 'Locked' : esc(info.title) + ' · ' + info.arch + ' · ' + U.comma(info.hp) + ' HP'}</div>
+            <div class="fl-name">${locked ? '???' : esc(isRival ? myRival.name : info.name)}${isRival ? ' <em class="rival">RIVAL</em>' : info.warden ? ' <em>WARDEN</em>' : ''}${info.final ? ' <em>FINAL</em>' : ''}</div>
+            <div class="fl-meta">${locked ? 'Locked'
+        : isRival ? esc(myRival.title) + ' · ' + esc(myRival.role) + ' · she came down to meet you'
+          : esc(info.title) + ' · ' + info.arch + ' · ' + U.comma(info.hp) + ' HP'}</div>
           </div>
           <div class="fl-right">
             ${locked ? '<span class="lock">🔒</span>'
@@ -5578,6 +5634,7 @@ button { font-family: inherit; cursor: pointer; }
 
     Game.screen = 'fight';
     root.ST.UI.show('fight');
+    Audio.setVoice(character.voice);
     Audio.startMusic(info.tierIndex);
   };
 

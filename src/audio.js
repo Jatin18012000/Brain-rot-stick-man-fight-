@@ -95,12 +95,21 @@
     src.start(t); src.stop(t + dur + 0.02);
   }
 
+  /* Impacts are voiced per fighter: a rushdown lands sharp and quick, a heavy
+   * zoner lands low and long. Set by the game when a fight starts. */
+  Audio.voice = { pitch: 1, length: 1 };
+  Audio.setVoice = function (v) {
+    Audio.voice = { pitch: (v && v.pitch) || 1, length: (v && v.length) || 1 };
+  };
+  const vp = () => Audio.voice.pitch;
+  const vl = () => Audio.voice.length;
+
   const SFX = {
-    whiffLight() { burst(0.09, 0.10, 2600, 1.2); },
-    whiffHeavy() { burst(0.16, 0.15, 1500, 0.9); },
-    hitLight() { burst(0.10, 0.35, 1800, 0.8); tone(150, 0.11, 'square', 0.22, 60); },
-    hitHeavy() { burst(0.18, 0.5, 900, 0.7); tone(96, 0.2, 'square', 0.34, 42); },
-    hitSpecial() { burst(0.26, 0.55, 600, 0.6); tone(140, 0.3, 'sawtooth', 0.3, 48); tone(320, 0.22, 'square', 0.16, 90); },
+    whiffLight() { burst(0.09 * vl(), 0.10, 2600 * vp(), 1.2); },
+    whiffHeavy() { burst(0.16 * vl(), 0.15, 1500 * vp(), 0.9); },
+    hitLight() { burst(0.10 * vl(), 0.35, 1800 * vp(), 0.8); tone(150 * vp(), 0.11 * vl(), 'square', 0.22, 60 * vp()); },
+    hitHeavy() { burst(0.18 * vl(), 0.5, 900 * vp(), 0.7); tone(96 * vp(), 0.2 * vl(), 'square', 0.34, 42 * vp()); },
+    hitSpecial() { burst(0.26 * vl(), 0.55, 600 * vp(), 0.6); tone(140 * vp(), 0.3 * vl(), 'sawtooth', 0.3, 48 * vp()); tone(320 * vp(), 0.22 * vl(), 'square', 0.16, 90 * vp()); },
     block() { burst(0.08, 0.3, 5200, 4); tone(680, 0.06, 'square', 0.12, 520); },
     guardBreak() { burst(0.3, 0.4, 2200, 2); tone(220, 0.4, 'sawtooth', 0.24, 70); },
     jump() { tone(300, 0.13, 'sine', 0.14, 620); },
