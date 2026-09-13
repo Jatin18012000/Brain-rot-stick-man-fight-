@@ -92,7 +92,9 @@
     ctx.font = '700 15px system-ui, sans-serif';
     ctx.fillStyle = '#fff';
     ctx.fillText(b.name.toUpperCase(), W - 24, 34);
-    bar(ctx, W - 24 - barW, 42, barW, barH, b.hp / b.maxHp, g.bossInfo.warden || g.bossInfo.final ? '#ff4d6d' : '#ff7b54', null, true, g.ghostB);
+    const bossBarColor = g.bossInfo.isRival ? g.bossInfo.colors.body
+      : (g.bossInfo.warden || g.bossInfo.final) ? '#ff4d6d' : '#ff7b54';
+    bar(ctx, W - 24 - barW, 42, barW, barH, b.hp / b.maxHp, bossBarColor, null, true, g.ghostB);
     ctx.font = '600 11px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
     ctx.fillText(g.bossInfo.title + '  •  ' + g.bossInfo.arch, W - 28, 76);

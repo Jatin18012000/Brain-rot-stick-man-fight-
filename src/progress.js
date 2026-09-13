@@ -216,6 +216,17 @@
     },
 
     character() { return root.ST.Characters.get(P.data.character); },
+
+    /* Average equipped tier, which decides which gear look a character wears. */
+    gearTier() {
+      let sum = 0, n = 0;
+      for (const slot in P.data.equipped) {
+        const id = P.data.equipped[slot];
+        if (id && ITEM_BY_ID[id]) { sum += ITEM_BY_ID[id].tier; n++; }
+      }
+      return n ? sum / n : 1;
+    },
+    gearBand() { return root.ST.Characters.tierBand(P.gearTier()); },
     chooseCharacter(id) {
       P.data.character = id;
       P.save();

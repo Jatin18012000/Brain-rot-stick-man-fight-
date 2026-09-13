@@ -63,6 +63,12 @@
       case 'resetKeys': Input.resetBindings(); UI.show('settings'); break;
       case 'wipe': doWipe(); break;
       case 'install': UI.show('install'); break;
+      case 'storyGo': {
+        const go = UI._storyContinue;
+        UI._storyContinue = null;
+        if (go) go();
+        break;
+      }
       default: break;
     }
   }
@@ -206,11 +212,12 @@
         : '<div class="cs-sig"><span>SIGNATURE</span> <b>None — every combo, no bias</b></div>';
       return `
         <div class="cs-card ${chosen === c.id ? 'on' : ''}" style="--acc:${c.colors.accent}">
-          <canvas class="cs-portrait" data-char="${c.id}" width="240" height="340"></canvas>
+          <canvas class="cs-portrait" data-char="${c.id}" width="240" height="260"></canvas>
           <div class="cs-body">
             <div class="cs-role">${esc(c.role)}</div>
             <div class="cs-name">${esc(c.name)}</div>
             <div class="cs-title">${esc(c.title)}</div>
+            <p class="cs-quote">&ldquo;${esc(c.quote)}&rdquo;</p>
             <p class="cs-tag">${esc(c.tagline)}</p>
             <div class="cs-stats">${bars}</div>
             ${sig}
@@ -247,15 +254,9 @@
         w: cv.width, h: cv.height,
       };
     });
-    let last = performance.now();
-    const tick = (now) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
-      const t = now / 1000;
-      ctxs.forEach((c) => root.ST.Render.drawPortrait(c.ctx, c.ch, t, c.w, c.h, dt));
-      UI._portraitRAF = requestAnimationFrame(tick);
-    };
-    UI._portraitRAF = requestAnimationFrame(tick);
+    // The commissioned bust, drawn once — it is flat screen-print art, not an
+    // animation, and the live fighter is already moving on the backdrop.
+    ctxs.forEach((c) => root.ST.Render.drawPortraitArt(c.ctx, c.ch, c.w, c.h));
   }
 
   function towerScreen() {
@@ -600,6 +601,72 @@
         </div>
       </div>`;
   };
+
+  // -------------------------------------------------------------- story
+  /* A campaign beat. On a rival floor it doubles as the versus screen, which
+   * is what the commissioned portraits were drawn for. */
+  UI.showStory = function (beat, onContinue) {
+    const G = root.ST.Game;
+    UI.setPaused(false);
+    UI.el.classList.remove('hidden');
+    UI.touch.classList.add('hidden');
+    document.getElementById('app').classList.remove('fighting');
+    if (UI._portraitRAF) { cancelAnimationFrame(UI._portraitRAF); UI._portraitRAF = null; }
+    UI.current = 'story';
+    G.screen = 'story';
+
+    const you = Progress.character();
+    const rival = beat.rival ? root.ST.Characters.get(beat.rival) : null;
+    const d = beat.data;
+
+    const versus = rival ? `
+      <div class="vs-strip">
+        <div class="vs-side">
+          <canvas class="vs-art" data-char="${you.id}" width="240" height="260"></canvas>
+          <div class="vs-name" style="--c:${you.colors.body};--t:${you.portrait.nameColor}">
+            <b>${esc(you.name)}</b><span>${esc(you.role)}</span>
+          </div>
+        </div>
+        <div class="vs-mid">VS</div>
+        <div class="vs-side">
+          <canvas class="vs-art" data-char="${rival.id}" width="240" height="260"></canvas>
+          <div class="vs-name" style="--c:${rival.colors.body};--t:${rival.portrait.nameColor}">
+            <b>${esc(rival.name)}</b><span>${esc(rival.role)}</span>
+          </div>
+        </div>
+      </div>` : '';
+
+    UI.el.innerHTML = `
+      <div class="screen story ${beat.kind}">
+        <div class="story-card" style="--acc:${(rival || you).colors.accent}">
+          <div class="story-title">${esc(d.title)}</div>
+          ${versus}
+          ${d.speaker ? `<div class="story-speaker">${esc(d.speaker)}</div>` : ''}
+          <div class="story-lines">
+            ${d.lines.map((l) => `<p>${esc(l)}</p>`).join('')}
+          </div>
+          ${d.sting ? `<div class="story-sting">${esc(d.sting)}</div>` : ''}
+          <button class="big primary" data-ui="storyGo">
+            ${beat.kind === 'after' || beat.kind === 'ending' ? 'CONTINUE' : 'FIGHT'}
+          </button>
+        </div>
+      </div>`;
+
+    UI._storyContinue = onContinue;
+    if (rival) startVersusArt();
+  };
+
+  function startVersusArt() {
+    const canvases = Array.prototype.slice.call(document.querySelectorAll('.vs-art'));
+    const dpr = Math.min(root.devicePixelRatio || 1, 2);
+    canvases.forEach((cv) => {
+      const r = cv.getBoundingClientRect();
+      cv.width = Math.max(1, Math.round(r.width * dpr));
+      cv.height = Math.max(1, Math.round(r.height * dpr));
+      const ch = root.ST.Characters.get(cv.dataset.char);
+      root.ST.Render.drawPortraitArt(cv.getContext('2d'), ch, cv.width, cv.height);
+    });
+  }
 
   // -------------------------------------------------------------- pause
   UI.setPaused = function (paused) {

@@ -83,29 +83,64 @@ on an iPad and it just works. Every key is remappable in **Settings**.
 
 You pick a fighter and climb with them. Same tower, same rules, same gear and
 training — what changes is how you get it done, and each one carries a
-signature combo nobody else can throw. You can switch fighter any time; floors,
-coins and gear stay with you.
+signature combo nobody else can throw. Switch fighter any time; floors, coins
+and gear stay with you.
 
 | Fighter | Role | Plays like | Signature |
 | --- | --- | --- | --- |
-| **The Stickman** | All-rounder | Every stat dead average, every option open | — |
-| **BLAZE** | Rushdown | Fastest walk and recovery, thinnest health bar, builds rage quickest | Ember Rush · `K → P1 → P1` |
-| **VESPER** | Zoner / Power | Every attack box 9 units wider, heavier hits, slower | Toll the Bell · `P2 → P1 → K` |
+| **RAZA** | Rushdown | Fastest walk and recovery, thinnest health bar, quickest rage build, shortest reach | Nine Bells · `K → P1 → P1` |
+| **VANE** | Zoner | Every attack box 9 units wider, heavier hits, slower and more deliberate | Full Stop · `P2 → P1 → K` |
+| **THE STICKMAN** | All-rounder | Every stat dead average, every option open, no signature | — |
 
-Characters are pure data in `src/characters.js`: palette, build, stat
-modifiers, stance, the soft parts that trail behind them, and their signature
-combo. Adding one is editing that file — nothing else knows their details.
+RAZA and VANE are built from the commissioned character sheets
+(*Stickman Tower / character build spec / v1*). Every number in
+`src/characters.js` traces back to that document: bone lengths, five-colour
+palettes, attachment joints and rest angles, damping, stance, walk cadence,
+signature beats and FX colours. The sheet ships two artboards per fighter —
+the **side** view is authoritative here, because it faces +x exactly like the
+engine's `facing = +1`; the front view is a compositional piece whose limb
+ordering does not map onto a profile fighter.
 
-**Soft parts.** Ponytails, sashes and coat tails are verlet ropes hung off the
-skeleton joints the renderer already computes, so the body stops and the hair
-does not. That lag is what stops a character reading as a plain stick figure.
-Each one declares its joint, length, stiffness, gravity and rest direction.
+Adding a fighter is editing that one file. Nothing else knows their details.
 
-`tools/check-combos.mjs` validates every character's combo set separately,
-since a signature has to coexist with the shared list without stealing its
-inputs. `tools/balance.mjs` runs the full 100-floor climb for each of them.
+**Skeletons differ.** Bone lengths, stroke weights and head radius come from
+each character's build block, so RAZA (scale 0.94, short quick legs, heavy
+10.5 torso stroke) and VANE (scale 1.18, +2 shin, +4 arm reach, lean 6.5
+stroke) are genuinely different bodies rather than recoloured copies. Joint
+heights follow the bones — shorter legs mean a lower pelvis, or the feet would
+not reach the floor.
 
-## How the fighting works
+**Soft parts.** Twin tails, sashes, coat tails and braids are verlet ropes hung
+off the skeleton joints the renderer already computes, so the body stops and
+the hair does not. Each declares its joint, origin offset, rest angle,
+stiffness, gravity and damping straight from the sheet.
+
+**Reach is mechanical, not cosmetic.** VANE's `reach: 9` widens every attack
+box she throws, so she wins trades a short-limbed fighter cannot reach.
+
+**Gear takes the character's palette.** Equipment tier reads through size and
+shape, and low/mid/high bands swap whole sets of parts — RAZA gains gold cuffs,
+greaves and a crown ring; VANE gains pauldrons, a halo, a hip plate and finally
+a blade off the lead hand.
+
+## Campaign
+
+One tower, three stories. Each character gets an opening on floor 1, three
+rival encounters, and an ending on floor 100.
+
+**Rivals replace the Warden on floors 20, 50 and 80.** The fighter you did not
+pick comes down the tower to meet you: same floor stat curve, but wearing her
+own modifiers, her reach, her signature and an AI profile built from her role —
+RAZA crowds you at 46 units with longer strings, VANE holds 150 and punishes
+whiffs. Play RAZA and VANE stands in your way; play VANE and RAZA is the
+upstart; play the Stickman and the tower's own former champion keeps turning up
+to find out what you are.
+
+Beats are cards shown before and after those fights, and the rival card doubles
+as the versus screen — which is what the commissioned portraits were drawn for.
+Nothing in the campaign touches the fighting.
+
+## How the fighting works## How the fighting works
 
 Standard fighting-game rules, kept honest: every attack has **startup**,
 **active** and **recovery** frames, and the boss is bound by exactly the same
@@ -187,6 +222,7 @@ src/audio.js            every sound, synthesised with WebAudio
 src/input.js            touch + keyboard + gamepad -> one action set
 src/moves.js            frame data and combo recipes
 src/characters.js       playable characters: palette, build, soft parts
+src/campaign.js         story beats and rival encounters
 src/floors.js           the 100 bosses
 src/progress.js         save data, shop catalogue, economy
 src/fighter.js          physics, state machine, hit/hurt boxes

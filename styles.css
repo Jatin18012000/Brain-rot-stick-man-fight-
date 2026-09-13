@@ -405,3 +405,42 @@ button { font-family: inherit; cursor: pointer; }
 .cs-card .big { margin-bottom: 0; }
 .combo.sig { border-color: var(--gold); }
 .cb-name em { font-style: normal; font-size: 8px; letter-spacing: .12em; background: var(--gold); color: #1a1200; padding: 1px 5px; border-radius: 4px; vertical-align: middle; }
+
+/* ----------------------------------------------------------- story beats */
+.story { display: flex; align-items: center; justify-content: center; min-height: 92vh; }
+.story-card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-top: 3px solid var(--acc); border-radius: 16px;
+  padding: 24px; width: 100%; max-width: 720px;
+}
+.story-title {
+  font-size: 10px; letter-spacing: .3em; font-weight: 900; color: var(--acc);
+  text-transform: uppercase; margin-bottom: 14px;
+}
+.story-speaker {
+  font-size: 11px; letter-spacing: .22em; font-weight: 900; color: var(--text);
+  border-left: 3px solid var(--acc); padding-left: 10px; margin-bottom: 10px;
+}
+.story-lines p {
+  margin: 0 0 10px; font-size: clamp(14px, 2.2vh, 17px); line-height: 1.6; color: #dbe3f2;
+}
+.story-lines p:first-child { color: var(--text); }
+.story-sting {
+  margin: 14px 0 18px; font-size: clamp(15px, 2.6vh, 20px); font-weight: 900;
+  letter-spacing: .04em; color: var(--acc);
+}
+.story.ending .story-sting { color: var(--gold); }
+
+.vs-strip { display: flex; align-items: center; gap: 12px; margin: 4px 0 18px; }
+.vs-side { flex: 1; min-width: 0; }
+.vs-art { width: 100%; height: auto; aspect-ratio: 240 / 260; display: block; border-radius: 8px; }
+.vs-name {
+  background: var(--c); color: var(--t); padding: 7px 10px; border-radius: 0 0 8px 8px;
+  margin-top: -4px; display: flex; flex-direction: column;
+}
+.vs-name b { font-size: clamp(15px, 2.6vh, 22px); line-height: 1; letter-spacing: -.01em; }
+.vs-name span { font-size: 9px; letter-spacing: .18em; text-transform: uppercase; opacity: .8; margin-top: 3px; }
+.vs-mid { font-size: clamp(20px, 4vh, 34px); font-weight: 900; color: var(--dim); flex: none; }
+
+.cs-quote { font-size: 13px; font-style: italic; color: var(--text); margin: 2px 0 0; line-height: 1.4; }
+.cs-portrait { height: auto; aspect-ratio: 240 / 260; }

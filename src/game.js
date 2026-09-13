@@ -84,8 +84,40 @@
   // ------------------------------------------------------------ fight setup
   Game.startFight = function (floor, opts) {
     const o = opts || {};
+    const Campaign = root.ST.Campaign;
+    const Characters = root.ST.Characters;
+    const charId = Progress.data.character || 'classic';
+
+    // A story beat interrupts the run-up to the fight, never the fight itself.
+    if (!o.skipBeat) {
+      const beat = Campaign.beatBefore(floor, charId, Progress.data);
+      if (beat) {
+        Campaign.markSeen(Progress.data, charId, beat.key);
+        Progress.save();
+        root.ST.UI.showStory(beat, () => Game.startFight(floor, Object.assign({}, o, { skipBeat: true })));
+        return;
+      }
+    }
+
     Game.trainingMode = !!o.training;
-    const info = Floors.get(floor);
+    let info = Floors.get(floor);
+
+    // On a rival floor the Warden is replaced by the fighter you did not pick.
+    const rivalId = Campaign.isRivalFloor(floor) ? Campaign.rivalOf(charId) : null;
+    const rival = rivalId ? Characters.get(rivalId) : null;
+    if (rival) {
+      info = Object.assign({}, info, {
+        name: rival.name,
+        title: rival.title,
+        arch: rival.role,
+        colors: rival.colors,
+        taunt: rival.quote,
+        isRival: true,
+        rivalId: rivalId,
+        scale: rival.build.scale,
+      });
+    }
+    Game.rival = rival;
     const stats = Progress.combat();
 
     const gear = buildGearVisual();
@@ -104,19 +136,50 @@
       spdMul: info.speed / 178, aspdMul: 1 + Math.min(0.5, floor * 0.006),
       crit: Math.min(0.35, 0.02 + floor * 0.003), critDmg: 1.5,
       rageMul: 1 + floor * 0.01, lifesteal: info.final ? 0.08 : 0,
+      reach: 0,
     };
+    if (rival) {
+      // A rival is the floor's stat block wearing a player character: same
+      // curve, her modifiers, her reach, her signature.
+      const esc = Campaign.rivalScale(floor);
+      bossStats.maxHp = Math.round(bossStats.maxHp * rival.stats.hp * esc);
+      bossStats.atkMul *= rival.stats.atk * esc;
+      bossStats.spdMul *= rival.stats.spd;
+      bossStats.aspdMul *= rival.stats.aspd;
+      bossStats.crit = Math.min(0.5, bossStats.crit + rival.stats.crit);
+      bossStats.rageMul *= rival.stats.rage;
+      bossStats.reach = rival.stats.reach;
+    }
     const boss = new Fighter({
       name: info.name, x: 660, facing: -1,
       colors: info.colors, stats: bossStats, scale: info.scale,
-      gear: bossGearVisual(info),
+      character: rival,
+      gear: rival ? rivalGearVisual(rival, floor) : bossGearVisual(info),
       specials: [],
     });
     boss.y = BOUNDS.ground;
+    boss.auraColor = rival ? rival.colors.aura : info.colors.aura;
+    if (rival) {
+      boss._backColor = tooCloseToStage(rival.colors.back, info.tier.ground)
+        ? (rival.colors.backBright || rival.colors.back)
+        : rival.colors.back;
+    }
+
+    // The sheet flags one contrast risk: a dark-red back limb on a dark-red
+    // stage. Lift it wherever the stage colour sits too close to it.
+    player._backColor = tooCloseToStage(character.colors.back, info.tier.ground)
+      ? (character.colors.backBright || character.colors.back)
+      : character.colors.back;
+    Game.band = Progress.gearBand();
 
     Game.player = player;
     Game.boss = boss;
     Game.bossInfo = info;
-    Game.ai = new AI(boss, info.ai, floor);
+    const aiProfile = rival ? rivalProfile(info.ai, rivalId) : info.ai;
+    Game.ai = new AI(boss, aiProfile, floor);
+    if (rival && rival.signature) {
+      Game.ai.specials = Game.ai.specials.concat([rival.signature]);
+    }
     Game.clock = (info.warden || info.final) ? BOSS_FIGHT_SECONDS : FIGHT_SECONDS;
     Game.timer = Game.clock;
     Game.hitstop = 0;
@@ -162,12 +225,30 @@
     Audio.startMusic(info.tierIndex);
   };
 
+  /* Straight RGB distance is crude but it is the right crudeness here: the
+   * problem is a back limb sharing a hue family with the stage, not luminance.
+   * Below ~125 catches the Blood Arena and leaves every other stage alone. */
+  function tooCloseToStage(colorA, colorB) {
+    const rgb = (hex) => {
+      const h = hex.replace('#', '');
+      const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    };
+    const a = rgb(colorA), b = rgb(colorB);
+    return Math.sqrt(
+      (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2])
+    ) < 125;
+  }
+
   function buildGearVisual() {
     const eq = Progress.data.equipped;
     const Shop = root.ST.Shop;
     const item = (id) => (id ? Shop.ITEM_BY_ID[id] : null);
     const w = item(eq.weapon), a = item(eq.armor), h = item(eq.head), b = item(eq.boots), gl = item(eq.gloves), ch = item(eq.charm);
-    const tierColor = ['#b8b8b8', '#c9a227', '#9fb4c7', '#d68c45', '#7ee787', '#6ee7ff', '#c77dff', '#ffd166'];
+    // Gear takes the character's own palette. A generic tier ramp put orange
+    // plate on a cyan fighter; tier now reads through size and shape instead.
+    const pal = Progress.character().colors;
+    const tierColor = [pal.trim, pal.trim, pal.accent, pal.accent, pal.accent, pal.aura, pal.aura, pal.aura];
     return {
       weaponTier: w ? w.tier : 0, weaponColor: w ? tierColor[w.tier - 1] : null,
       armor: !!a, armorColor: a ? tierColor[a.tier - 1] : null, armorTier: a ? a.tier : 0,
@@ -175,6 +256,40 @@
       boots: !!b, bootTier: b ? b.tier : 0,
       glovesTier: gl ? gl.tier : 0,
       charm: !!ch, charmColor: ch ? tierColor[ch.tier - 1] : null,
+    };
+  }
+
+  /* A rival fights like her design says she does, not like a generated boss. */
+  function rivalProfile(base, rivalId) {
+    const p = Object.assign({}, base);
+    if (rivalId === 'raza') {
+      p.aggression = U.clamp(p.aggression * 1.3, 0.3, 0.97);
+      p.spacing = 46;
+      p.jumpiness = p.jumpiness * 0.6;
+      p.comboLen = Math.min(6, p.comboLen + 1);
+      p.blockChance = p.blockChance * 0.85;
+      p.mixup = true;
+    } else if (rivalId === 'vane') {
+      p.aggression = U.clamp(p.aggression * 0.8, 0.2, 0.8);
+      p.spacing = 150;
+      p.blockChance = U.clamp(p.blockChance * 1.25, 0, 0.85);
+      p.whiffPunish = true;
+      p.antiAir = U.clamp(p.antiAir + 0.2, 0, 0.9);
+      p.jumpiness = p.jumpiness * 0.4;
+    }
+    p.specialChance = U.clamp(p.specialChance + 0.2, 0, 0.7);
+    return p;
+  }
+
+  /* Rivals wear their own palette, scaled to how deep the floor is. */
+  function rivalGearVisual(rival, floor) {
+    const t = U.clamp(Math.ceil(floor / 13), 1, 8);
+    return {
+      weaponTier: floor > 20 ? t : 0, weaponColor: rival.colors.accent,
+      armor: false,
+      head: false,
+      boots: floor > 40, bootTier: t,
+      charm: false,
     };
   }
 
@@ -273,7 +388,7 @@
     if (!Game.phaseTriggered && Game.bossInfo.phases > 1 && b.hp / b.maxHp < 0.5) {
       Game.phaseTriggered = true;
       Game.ai.enterPhase2();
-      b.colors.aura = b.colors.aura || '#ff4d6d';
+      b.auraColor = b.auraColor || '#ff4d6d';
       b.addMeter(50);
       R.FX.ring(b.x, b.y - 55, '#ff4d6d', 10, 160, 0.6);
       R.FX.text(b.x, b.y - 130, 'SECOND WIND', '#ff4d6d', 22);
@@ -282,6 +397,9 @@
     }
 
     stepFighters(dt, false);
+    signatureFx(p);
+    if (p.partFlash > 0) p.partFlash -= dt;
+    if (b.partFlash > 0) b.partFlash -= dt;
     updateProjectiles(dt);
     resolveHits();
     pushApart();
@@ -304,6 +422,40 @@
       if (p.dashTimer > 8) R.FX.trail(p.x, p.y, '#6ea8ff', p.scale);
       if (b.dashTimer > 8) R.FX.trail(b.x, b.y, b.colors.body, b.scale);
       if (p.state === 'special') R.FX.trail(p.x, p.y, '#ffd166', p.scale);
+    }
+  }
+
+  /* Beat-timed effects for the character signatures, exactly as the sheets
+   * specify them. Fires once per frame crossing so a slow frame cannot
+   * double-trigger or skip. */
+  function signatureFx(f) {
+    if (f.state !== 'special' || !f.special || !f.special.fx) {
+      f._sigPrev = -1;
+      return;
+    }
+    const sp = f.special;
+    const prev = f._sigPrev === undefined ? -1 : f._sigPrev;
+    const now = f.frame;
+    f._sigPrev = now;
+    const crossed = (n) => prev < n && now >= n;
+    const c = f.character.colors;
+
+    if (sp.fx === 'raza') {
+      if (crossed(10)) {
+        [0.40, 0.25, 0.12].forEach((a, i) => {
+          setTimeout(() => R.FX.afterimage(f, a, 0.26), i * 28);
+        });
+      }
+      if (crossed(58)) {
+        R.FX.ring(f.x + f.facing * 40, f.y - 62 * f.scale, c.aura, 12, 46, 0.14);
+      }
+    } else if (sp.fx === 'vane') {
+      if (crossed(32)) {
+        R.FX.groundWave(f.x + f.facing * 30, Game.BOUNDS.ground, f.facing, c.aura, 120, 0.17);
+        for (let i = 0; i < 5; i++) {
+          R.FX.trail(f.x + f.facing * (20 + i * 14), f.y, c.body, f.scale * 0.6);
+        }
+      }
     }
   }
 
@@ -501,9 +653,17 @@
     def.chain = (def.chainTimer > 0 ? def.chain : 0) + 1;
     def.chainTimer = 1.1;
 
-    R.FX.spark(cx, cy, heavy ? 14 : 8, res.crit ? '#ffd166' : '#fff3b0', heavy ? 280 : 180);
-    R.FX.ring(cx, cy, res.crit ? '#ffd166' : '#ffffff', 4, heavy ? 60 : 36, 0.2);
-    if (d.shock) R.FX.shock(cx, cy, '#ffd166');
+    const acc = atk.character ? atk.character.colors.accent : '#fff3b0';
+    const trim = atk.character ? atk.character.colors.trim : '#ffffff';
+    if (d.special && atk.character) {
+      // Sparks run along the punch vector rather than bursting in a ball.
+      R.FX.shards(cx, cy, atk.facing > 0 ? -0.35 : Math.PI + 0.35, heavy ? 8 : 6, acc, 0.9, heavy ? 340 : 240);
+    } else {
+      R.FX.spark(cx, cy, heavy ? 14 : 8, res.crit ? '#ffd166' : acc, heavy ? 280 : 180);
+    }
+    R.FX.ring(cx, cy, res.crit ? '#ffd166' : trim, 4, heavy ? 60 : 36, 0.2);
+    if (d.shock) R.FX.shock(cx, cy, acc);
+    atk.partFlash = 0.034;   // two frames — the sheet's forearm-wrap flash
 
     Game.hitstop = Math.max(Game.hitstop, heavy ? 0.085 : 0.045);
     Game.shake = Math.max(Game.shake, heavy ? 12 : 6);
@@ -580,6 +740,17 @@
     }
     Game.screen = 'result';
     Input.releaseAll();
+
+    const charId = Progress.data.character || 'classic';
+    const after = Game.result === 'win' && !Game.trainingMode
+      ? root.ST.Campaign.beatAfter(info.floor, charId, Progress.data)
+      : null;
+    if (after) {
+      root.ST.Campaign.markSeen(Progress.data, charId, after.key);
+      Progress.save();
+      root.ST.UI.showStory(after, () => root.ST.UI.showResult(payload));
+      return;
+    }
     root.ST.UI.showResult(payload);
   };
 
@@ -646,7 +817,10 @@
     R.drawBackground(ctx, Game.bossInfo.tier, Game.t, Game.shakeX);
 
     const order = Game.player.y <= Game.boss.y ? [Game.boss, Game.player] : [Game.player, Game.boss];
-    order.forEach((f) => R.drawFighter(ctx, f, { debug: Game.settings.debug, dt: Game.frameDt }));
+    order.forEach((f) => R.drawFighter(ctx, f, {
+      debug: Game.settings.debug, dt: Game.frameDt,
+      band: f.isPlayer ? Game.band : 'mid',
+    }));
 
     Game.projectiles.forEach((pr) => R.drawProjectile(ctx, pr, Game.t));
     R.drawFx(ctx);
@@ -698,7 +872,7 @@
     demo.character = ch;
     demo.colors = ch.colors;
     demo.scale = ch.build.scale;
-    R.drawFighter(ctx, demo, { dt: Game.frameDt });
+    R.drawFighter(ctx, demo, { dt: Game.frameDt, band: Progress.gearBand() });
     ctx.fillStyle = 'rgba(4,6,12,0.55)';
     ctx.fillRect(0, 0, R.W, R.H);
   }

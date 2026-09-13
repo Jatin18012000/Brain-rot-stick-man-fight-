@@ -423,6 +423,45 @@ button { font-family: inherit; cursor: pointer; }
 .combo.sig { border-color: var(--gold); }
 .cb-name em { font-style: normal; font-size: 8px; letter-spacing: .12em; background: var(--gold); color: #1a1200; padding: 1px 5px; border-radius: 4px; vertical-align: middle; }
 
+/* ----------------------------------------------------------- story beats */
+.story { display: flex; align-items: center; justify-content: center; min-height: 92vh; }
+.story-card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-top: 3px solid var(--acc); border-radius: 16px;
+  padding: 24px; width: 100%; max-width: 720px;
+}
+.story-title {
+  font-size: 10px; letter-spacing: .3em; font-weight: 900; color: var(--acc);
+  text-transform: uppercase; margin-bottom: 14px;
+}
+.story-speaker {
+  font-size: 11px; letter-spacing: .22em; font-weight: 900; color: var(--text);
+  border-left: 3px solid var(--acc); padding-left: 10px; margin-bottom: 10px;
+}
+.story-lines p {
+  margin: 0 0 10px; font-size: clamp(14px, 2.2vh, 17px); line-height: 1.6; color: #dbe3f2;
+}
+.story-lines p:first-child { color: var(--text); }
+.story-sting {
+  margin: 14px 0 18px; font-size: clamp(15px, 2.6vh, 20px); font-weight: 900;
+  letter-spacing: .04em; color: var(--acc);
+}
+.story.ending .story-sting { color: var(--gold); }
+
+.vs-strip { display: flex; align-items: center; gap: 12px; margin: 4px 0 18px; }
+.vs-side { flex: 1; min-width: 0; }
+.vs-art { width: 100%; height: auto; aspect-ratio: 240 / 260; display: block; border-radius: 8px; }
+.vs-name {
+  background: var(--c); color: var(--t); padding: 7px 10px; border-radius: 0 0 8px 8px;
+  margin-top: -4px; display: flex; flex-direction: column;
+}
+.vs-name b { font-size: clamp(15px, 2.6vh, 22px); line-height: 1; letter-spacing: -.01em; }
+.vs-name span { font-size: 9px; letter-spacing: .18em; text-transform: uppercase; opacity: .8; margin-top: 3px; }
+.vs-mid { font-size: clamp(20px, 4vh, 34px); font-weight: 900; color: var(--dim); flex: none; }
+
+.cs-quote { font-size: 13px; font-style: italic; color: var(--text); margin: 2px 0 0; line-height: 1.4; }
+.cs-portrait { height: auto; aspect-ratio: 240 / 260; }
+
 </style>
 </head>
 <body>
@@ -1346,143 +1385,371 @@ button { font-family: inherit; cursor: pointer; }
 /* ===== src/characters.js ===== */
 /* Stickman Tower — playable characters.
  *
- * A character is pure data: palette, build, stat modifiers, stance, the soft
- * parts that trail behind them, and one signature combo. The fighting engine
- * is untouched — frame data, blocking, rage and combo matching are identical
- * for everyone. Characters change how you feel, not what the rules are.
+ * RAZA and VANE are implemented from the commissioned character sheets
+ * (Stickman Tower / character build spec / v1). Every number here traces to
+ * that document: proportions, palette hex, attachment joints, rest angles,
+ * damping, stance, signature beats and FX colours.
  *
- * NOTE: BLAZE and VESPER are placeholder builds in the engine's own visual
- * language, standing in until the commissioned character sheets land. To swap
- * a real design in, edit this file only — nothing else knows their details.
+ * The sheet ships two artboards per fighter. The *side* view is authoritative
+ * for this renderer — it faces +x, which is exactly the engine's facing=+1.
+ * The front view is a compositional piece and its limb ordering does not map
+ * to a profile fighter.
+ *
+ * A character is pure data. The fighting engine is untouched: identical frame
+ * data, blocking, rage and combo matching for everyone. Characters change how
+ * you feel, not what the rules are.
  *
  * ---------------------------------------------------------------------------
- * ATTACHMENTS (the soft parts)
- *   joint:     head neck shoulderF/B elbowF/B handF/B pelvis hipF/B kneeF/B footF/B
- *   type chain: a verlet rope — ponytails, braids, coat tails, sashes
- *     segments  number of links
- *     length    total length in the 112-unit body space
- *     width     stroke width at the root, tapering to width*taper
- *     rest      [x, y] rest direction; x is facing-relative, +y is DOWN
- *     stiffness 0..1 pull back toward the rest direction
- *     gravity   px/s^2, damp 0..1 velocity retention
- *   type shape: a rigid piece — collars, guards, visors
- *     shape     'wedge' | 'plate' | 'disc'
- *     size      [w, h], offset [x, y] from the joint (facing-relative x)
- *     angle     degrees, or 'limb' to follow the limb it hangs from
- *   color:      'body' | 'accent' | 'trim' | any hex
+ * ANGLES
+ *   attachments use the sheet's convention — degrees, 0 = forward, CCW, y up.
+ *   poses use the engine's — degrees, 0 = straight down, positive = forward.
+ *   `lean` is negative for a forward tilt (the torso draws along 180 + lean).
+ * ATTACHMENTS
+ *   joint:   head neck shoulderF/B elbowF/B handF/B foreArmF/B upperArmF/B
+ *            pelvis hipF/B kneeF/B footF/B shinF/B thighF/B
+ *   chain:   a verlet rope. segments, length, width (root), taper (tip/root),
+ *            angle (rest), stiffness, gravity, damp, origin [x,y] from joint.
+ *   shape:   rigid. capsule | arc | ring | wedge | plate | disc | tri.
+ *   minTier: hidden until the player's average gear tier reaches this.
+ *   flashOn: 'hit' recolours the part to the aura colour for 2 frames.
+ * STATS are multipliers on the derived combat block, except reach (flat units
+ *   on attack-box width) and crit (flat chance). tools/balance.mjs assumes
+ *   rough parity, so keep them modest and offsetting.
  * ---------------------------------------------------------------------------
- * STATS are multipliers on the player's derived combat block, except `reach`
- * (flat units added to attack hitbox width) and `crit` (flat chance added).
- * Keep them modest and offsetting: tools/balance.mjs assumes roughly parity.
  */
 (function (root) {
   'use strict';
 
   const CHARACTERS = [
+    // ---------------------------------------------------------------- RAZA
     {
-      id: 'classic',
-      name: 'The Stickman',
-      title: 'Floor One, Day One',
-      tagline: 'No gimmicks. No excuses. Every stat dead average, every option open.',
-      role: 'All-rounder',
-      colors: { body: '#f2f4f8', accent: '#6ea8ff', trim: '#9aa3b5', aura: null },
-      build: { scale: 1.00, limbWidth: 1.00, headR: 1.00 },
-      stats: { hp: 1.00, atk: 1.00, spd: 1.00, aspd: 1.00, crit: 0, rage: 1.00, reach: 0 },
-      stance: { lean: 0, guard: 0 },
-      attachments: [],
-      signature: null,
-      blurb: 'The baseline. If a floor is beatable, it is beatable with him.',
-    },
-
-    {
-      id: 'blaze',
-      name: 'BLAZE',
-      title: 'Sixteen Hits and Counting',
-      tagline: 'Gets in, stays in. The whole game plan is not letting you breathe.',
+      id: 'raza',
+      name: 'RAZA',
+      title: 'Fighter 01',
       role: 'Rushdown',
-      colors: { body: '#ffe3ec', accent: '#ff2d75', trim: '#ffd166', aura: null },
-      build: { scale: 0.96, limbWidth: 0.92, headR: 1.02 },
-      // Fast and relentless, but she has to take risks to win the damage race.
-      stats: { hp: 0.90, atk: 0.96, spd: 1.14, aspd: 1.12, crit: 0.04, rage: 1.12, reach: -3 },
-      stance: { lean: 6, guard: 12 },   // coiled forward, hands up
+      tagline: 'Gets in, stays in. The whole plan is not letting you breathe.',
+      quote: 'You get one clean breath a round. I take that one too.',
+      philosophy: 'Street-circuit brawler who fights on the front foot and never resets. '
+        + 'Distance is a mistake you only get to make once.',
+      recognisable: 'Twin gold tails flaring off a hot-pink body, short sash snapping behind '
+        + 'the hips. The only silhouette on screen wider above the shoulders than below.',
+
+      colors: {
+        body: '#F0356B',
+        back: '#A61E49',
+        backBright: '#C42756',   // sheet: lift back limbs on stages above 0.10 luminance
+        accent: '#FFC93C',
+        trim: '#FFF0E6',
+        aura: '#FF7A2F',
+      },
+
+      build: {
+        scale: 0.94,
+        limbs: {
+          thigh: 26, shin: 25, upperArm: 22, foreArm: 20,
+          shoulderW: 9, hipW: 7, headR: 11, torso: 34,
+          limbW: 7.5, torsoW: 10.5,
+        },
+      },
+
+      // Fast and relentless, paid for with health and reach.
+      stats: { hp: 0.93, atk: 1.00, spd: 1.14, aspd: 1.12, crit: 0.04, rage: 1.12, reach: -3 },
+
+      stance: {
+        lean: -7,                       // 6-7° forward, per sheet
+        armLen: 0.72, legLen: 1.0,      // guard held in tight, as drawn
+        idle: { amp: 2.0, hz: 3.4, hold: 0 },   // "fast 2u pulse" — 7Hz reads as a buzz, halved
+        walk: { stride: 9, backRatio: 0.77 },   // forward walk 1.3x back walk
+        pose: {                         // derived from the side artboard
+          armF: [27, -192], armB: [-25, 183],
+          legF: [17, -11], legB: [-15, 6],
+        },
+      },
+
       attachments: [
         {
-          id: 'ponytail', type: 'chain', joint: 'head',
-          segments: 6, length: 32, width: 5.5, taper: 0.2,
-          rest: [-1, 0.12], stiffness: 0.10, gravity: 1600, damp: 0.90,
-          color: 'accent',
+          id: 'tailA', type: 'chain', joint: 'head', origin: [3, 5],
+          segments: 2, length: 20, width: 6, taper: 0.45,
+          angle: 139, stiffness: 0.55, gravity: 420, damp: 0.86,
+          color: 'accent', layer: 'back', lenByTier: [1, 1.2, 1.3],
         },
         {
-          id: 'sash', type: 'chain', joint: 'pelvis',
-          segments: 5, length: 27, width: 4.5, taper: 0.25,
-          rest: [-0.7, 0.7], stiffness: 0.07, gravity: 1800, damp: 0.93,
-          color: 'trim',
+          id: 'tailB', type: 'chain', joint: 'head', origin: [3, 4],
+          segments: 2, length: 18, width: 5.5, taper: 0.4,
+          angle: 162, stiffness: 0.55, gravity: 420, damp: 0.86,
+          color: 'accent', layer: 'back', lenByTier: [1, 1.2, 1.3],
         },
         {
-          id: 'cuff', type: 'shape', joint: 'elbowF',
-          shape: 'plate', size: [9, 5], offset: [0, 0], angle: 'limb',
-          color: 'accent',
+          id: 'sash', type: 'chain', joint: 'pelvis', origin: [-1, 1],
+          segments: 2, length: 21, width: 5, taper: 0.4,
+          angle: 215, stiffness: 0.10, gravity: 1500, damp: 0.90,
+          color: 'aura', layer: 'back', lenByTier: [0.7, 1, 1],
+        },
+        {
+          id: 'wrapF', type: 'shape', joint: 'foreArmF', shape: 'capsule',
+          size: [8, 8], angle: 'limb', color: 'trim', layer: 'front', flashOn: 'hit',
+        },
+        {
+          id: 'wrapB', type: 'shape', joint: 'foreArmB', shape: 'capsule',
+          size: [8, 8], angle: 'limb', color: 'trim', layer: 'front', flashOn: 'hit',
+        },
+        {
+          id: 'band', type: 'shape', joint: 'head', origin: [3, 6], shape: 'plate',
+          size: [19, 4.5], angle: 0, color: 'accent', layer: 'front',
         },
       ],
-      signature: {
-        id: 'sigEmber', name: 'Ember Rush', seq: ['K', 'P1', 'P1'],
-        unlock: 1, cost: 14, duration: 54, anim: 'sigEmber',
-        desc: 'Kick, punch, punch. A running start into a two-fist flurry that drags you forward.',
-        hits: [
-          { f: 8, dmg: 11, active: 3, guard: 'mid', hitstun: 16, blockstun: 10, kb: 40, lift: 0, box: { x: 14, y: 46, w: 62, h: 30 } },
-          { f: 20, dmg: 9, active: 3, guard: 'mid', hitstun: 16, blockstun: 10, kb: 30, lift: 0, box: { x: 16, y: 66, w: 50, h: 24 } },
-          { f: 28, dmg: 9, active: 3, guard: 'mid', hitstun: 16, blockstun: 10, kb: 30, lift: 0, box: { x: 16, y: 66, w: 52, h: 24 } },
-          { f: 40, dmg: 24, active: 4, guard: 'mid', hitstun: 28, blockstun: 14, kb: 300, lift: 120, knockdown: true, box: { x: 14, y: 54, w: 72, h: 40 } },
+
+      // Extra pieces bolted on as your equipment tier climbs.
+      gearLooks: {
+        low: [
+          { id: 'tapeF', type: 'shape', joint: 'handF', shape: 'disc', size: [7, 7], color: 'trim', layer: 'front' },
+          { id: 'tapeB', type: 'shape', joint: 'handB', shape: 'disc', size: [7, 7], color: 'trim', layer: 'front' },
         ],
-        steps: [{ f: 6, vx: 260 }, { f: 26, vx: 160 }, { f: 38, vx: 200 }],
+        mid: [
+          { id: 'cuffF', type: 'shape', joint: 'elbowF', shape: 'capsule', size: [9, 9], angle: 'limb', color: 'accent', layer: 'front' },
+          { id: 'cuffB', type: 'shape', joint: 'elbowB', shape: 'capsule', size: [9, 9], angle: 'limb', color: 'accent', layer: 'front' },
+          { id: 'shinF', type: 'shape', joint: 'shinF', shape: 'capsule', size: [9, 8], angle: 'limb', color: 'trim', layer: 'front' },
+          { id: 'shinB', type: 'shape', joint: 'shinB', shape: 'capsule', size: [9, 8], angle: 'limb', color: 'trim', layer: 'back' },
+        ],
+        high: [
+          { id: 'gauntF', type: 'shape', joint: 'handF', shape: 'tri', size: [13, 11], angle: 'limb', color: 'accent', layer: 'front' },
+          { id: 'gauntB', type: 'shape', joint: 'handB', shape: 'tri', size: [13, 11], angle: 'limb', color: 'accent', layer: 'front' },
+          { id: 'greaveF', type: 'shape', joint: 'shinF', shape: 'capsule', size: [11, 10], angle: 'limb', color: 'accent', layer: 'front' },
+          { id: 'greaveB', type: 'shape', joint: 'shinB', shape: 'capsule', size: [11, 10], angle: 'limb', color: 'accent', layer: 'back' },
+          { id: 'halo', type: 'shape', joint: 'head', shape: 'ring', radius: 17, stroke: 1.6, color: 'aura', layer: 'back' },
+        ],
       },
-      blurb: 'Fastest walk speed and attack recovery in the game, and the thinnest health bar. '
-        + 'Her signature starts with a kick, so it comes out of neutral when a punch string would be read.',
+
+      signature: {
+        id: 'sigNineBells', name: 'Nine Bells', seq: ['K', 'P1', 'P1'],
+        unlock: 1, cost: 30, duration: 76, anim: 'sigNineBells',
+        desc: 'Kick, punch, punch. She drops, steps in, and rings nine straight punches off you '
+          + 'before the hook lands. Hands never leave guard height.',
+        fx: 'raza',
+        hits: (function () {
+          const out = [];
+          // nine alternating straights, one every four frames
+          for (let i = 0; i < 9; i++) {
+            out.push({
+              f: 16 + i * 4, dmg: 7, active: 2, guard: 'mid',
+              hitstun: 12, blockstun: 8, kb: 14, lift: 0,
+              box: { x: 16, y: i % 2 ? 68 : 64, w: 50, h: 24 },
+            });
+          }
+          // final hook, full hip rotation
+          out.push({
+            f: 58, dmg: 30, active: 4, guard: 'mid',
+            hitstun: 30, blockstun: 15, kb: 330, lift: 140, knockdown: true,
+            box: { x: 14, y: 56, w: 70, h: 38 },
+          });
+          return out;
+        }()),
+        steps: [{ f: 10, vx: 300 }, { f: 56, vx: 140 }],
+      },
+
+      portrait: {
+        w: 240, h: 260,
+        shapes: [
+          { t: 'rect', x: 0, y: 0, w: 240, h: 260, fill: '#F0356B' },
+          { t: 'poly', pts: [[0, 190], [240, 150], [240, 260], [0, 260]], fill: '#A61E49' },
+          { t: 'poly', pts: [[120, 150], [28, 60], [4, 124]], fill: '#FFC93C' },
+          { t: 'poly', pts: [[120, 150], [214, 52], [238, 120]], fill: '#FFC93C' },
+          { t: 'poly', pts: [[52, 260], [86, 178], [154, 178], [188, 260]], fill: '#2B0F1C' },
+          { t: 'circle', x: 120, y: 118, r: 58, fill: '#2B0F1C' },
+          { t: 'rect', x: 62, y: 106, w: 116, h: 15, fill: '#FFF0E6' },
+          { t: 'rect', x: 62, y: 86, w: 116, h: 9, fill: '#FFC93C' },
+          { t: 'rect', x: 0, y: 232, w: 240, h: 28, fill: '#FFC93C' },
+        ],
+        nameColor: '#2B0F1C',
+      },
+
+      blurb: 'Fastest walk and recovery in the game, thinnest health bar, quickest rage build. '
+        + 'Her signature opens with a kick, so it comes out of neutral when a punch string is read.',
     },
 
+    // ---------------------------------------------------------------- VANE
     {
-      id: 'vesper',
-      name: 'VESPER',
-      title: 'One Step Is Enough',
+      id: 'vane',
+      name: 'VANE',
+      title: 'Fighter 02',
+      role: 'Zoner',
       tagline: 'Holds the space you want to stand in, and charges rent.',
-      role: 'Zoner / Power',
-      colors: { body: '#e8e3ff', accent: '#8b5cf6', trim: '#ffd166', aura: null },
-      build: { scale: 1.10, limbWidth: 1.08, headR: 0.96 },
+      quote: 'Stand where I tell you to stand.',
+      philosophy: 'Former tower champion who fights the floor, not the opponent. '
+        + 'Every round is won in the gap.',
+      recognisable: 'A tall cyan column with a violet halo, one arm always extended, two long '
+        + 'coat tails falling almost to the floor. The vertical shape on the screen.',
+
+      colors: {
+        body: '#38D2F0',
+        back: '#176B85',
+        backBright: '#176B85',
+        accent: '#B388FF',
+        trim: '#F2FAFF',
+        aura: '#8A5CFF',
+      },
+
+      build: {
+        scale: 1.18,
+        limbs: {
+          thigh: 28, shin: 28, upperArm: 26, foreArm: 25,
+          shoulderW: 11, hipW: 7, headR: 11, torso: 34,
+          limbW: 6.5, torsoW: 9.5,
+        },
+      },
+
       // Longer reach and heavier hits, paid for with speed.
-      stats: { hp: 1.12, atk: 1.10, spd: 0.90, aspd: 0.93, crit: 0, rage: 0.96, reach: 9 },
-      stance: { lean: -4, guard: -9 },  // upright, low relaxed guard
+      stats: { hp: 1.12, atk: 1.10, spd: 0.88, aspd: 0.93, crit: 0, rage: 0.96, reach: 9 },
+
+      stance: {
+        lean: -3,                        // torso vertical
+        armLen: 0.62, legLen: 1.0,       // lead arm long but not absurd
+        idle: { amp: 3.0, hz: 1.0, hold: 0.3 },  // slow breath, hold at the top
+        walk: { stride: 16, backRatio: 1.0 },    // back walk as fast as forward
+        pose: {
+          armF: [60, 4], armB: [-27, 187],
+          legF: [19, -8], legB: [-19, 8],
+        },
+      },
+
       attachments: [
         {
-          id: 'coatBack', type: 'chain', joint: 'pelvis',
-          segments: 6, length: 42, width: 9, taper: 0.4,
-          rest: [-0.8, 0.7], stiffness: 0.09, gravity: 1400, damp: 0.94,
-          color: 'accent',
+          id: 'coatBack', type: 'chain', joint: 'hipB', origin: [-2, 2],
+          segments: 3, length: 46, width: 9, taper: 0.55,
+          angle: 265, stiffness: 0.06, gravity: 1400, damp: 0.82,
+          color: 'back', layer: 'back', lenByTier: [0.62, 1, 1.08],
         },
         {
-          id: 'coatFront', type: 'chain', joint: 'hipF',
-          segments: 5, length: 31, width: 6, taper: 0.35,
-          rest: [-0.25, 0.95], stiffness: 0.08, gravity: 1500, damp: 0.94,
-          color: 'accent',
+          id: 'coatFront', type: 'chain', joint: 'hipF', origin: [2, 2],
+          segments: 3, length: 46, width: 9, taper: 0.55,
+          angle: 275, stiffness: 0.06, gravity: 1400, damp: 0.82,
+          color: 'body', layer: 'back', lenByTier: [0.62, 1, 1.08],
         },
         {
-          id: 'collar', type: 'shape', joint: 'neck',
-          shape: 'wedge', size: [12, 9], offset: [-3, -1], angle: -20,
-          color: 'trim',
+          id: 'braid', type: 'chain', joint: 'head', origin: [1, 4],
+          segments: 2, length: 45, width: 5, taper: 0.6,
+          angle: 268, stiffness: 0.05, gravity: 1200, damp: 0.95,
+          color: 'accent', layer: 'back',
+        },
+        {
+          id: 'halo', type: 'shape', joint: 'head', shape: 'ring',
+          radius: 15.5, stroke: 1.6, color: 'accent', layer: 'back', minTier: 3,
+          radiusByTier: [15.5, 15.5, 20],
+        },
+        {
+          id: 'pauldronF', type: 'shape', joint: 'shoulderF', shape: 'arc',
+          radius: 7, stroke: 4, span: 180, angle: 0, color: 'trim', layer: 'front', minTier: 3,
+        },
+        {
+          id: 'pauldronB', type: 'shape', joint: 'shoulderB', shape: 'arc',
+          radius: 7, stroke: 4, span: 180, angle: 0, color: 'trim', layer: 'back', minTier: 3,
         },
       ],
-      signature: {
-        id: 'sigTollBell', name: 'Toll the Bell', seq: ['P2', 'P1', 'K'],
-        unlock: 1, cost: 18, duration: 62, anim: 'sigTollBell',
-        desc: 'Cross, jab, then a long pivot kick that catches anyone who stepped in.',
-        hits: [
-          { f: 10, dmg: 14, active: 3, guard: 'mid', hitstun: 18, blockstun: 12, kb: 90, lift: 0, box: { x: 16, y: 64, w: 66, h: 28 } },
-          { f: 22, dmg: 10, active: 3, guard: 'mid', hitstun: 16, blockstun: 10, kb: 60, lift: 0, box: { x: 16, y: 68, w: 58, h: 24 } },
-          { f: 42, dmg: 32, active: 5, guard: 'mid', hitstun: 30, blockstun: 16, kb: 360, lift: 150, knockdown: true, guardCrush: 26, box: { x: 14, y: 44, w: 96, h: 40 } },
+
+      gearLooks: {
+        low: [
+          { id: 'wrapF', type: 'shape', joint: 'foreArmF', shape: 'capsule', size: [9, 6], angle: 'limb', color: 'trim', layer: 'front' },
+          { id: 'wrapB', type: 'shape', joint: 'foreArmB', shape: 'capsule', size: [9, 6], angle: 'limb', color: 'trim', layer: 'front' },
         ],
-        steps: [{ f: 40, vx: 120 }],
+        mid: [
+          { id: 'hipPlate', type: 'shape', joint: 'pelvis', shape: 'plate', size: [14, 7], angle: 0, color: 'accent', layer: 'front' },
+          { id: 'bootF', type: 'shape', joint: 'footF', shape: 'plate', size: [10, 5], angle: 'limb', color: 'trim', layer: 'front' },
+          { id: 'bootB', type: 'shape', joint: 'footB', shape: 'plate', size: [10, 5], angle: 'limb', color: 'trim', layer: 'back' },
+          { id: 'sleeveF', type: 'shape', joint: 'foreArmF', shape: 'capsule', size: [11, 7], angle: 'limb', color: 'accent', layer: 'front' },
+        ],
+        high: [
+          { id: 'blade', type: 'shape', joint: 'handF', shape: 'tri', size: [20, 9], angle: 'limb', color: 'trim', layer: 'front' },
+          { id: 'collar', type: 'shape', joint: 'neck', origin: [-4, 4], shape: 'wedge', size: [14, 12], angle: 150, color: 'accent', layer: 'back' },
+          { id: 'greaveF', type: 'shape', joint: 'shinF', shape: 'capsule', size: [10, 9], angle: 'limb', color: 'accent', layer: 'front' },
+          { id: 'greaveB', type: 'shape', joint: 'shinB', shape: 'capsule', size: [10, 9], angle: 'limb', color: 'accent', layer: 'back' },
+          { id: 'pauldron2F', type: 'shape', joint: 'shoulderF', shape: 'arc', radius: 10, stroke: 4, span: 180, angle: 0, color: 'accent', layer: 'front' },
+        ],
       },
+
+      signature: {
+        id: 'sigFullStop', name: 'Full Stop', seq: ['P2', 'P1', 'K'],
+        unlock: 1, cost: 28, duration: 68, anim: 'sigFullStop',
+        desc: 'Cross, jab, kick. She plants, winds, holds absolutely still for six frames, '
+          + 'then puts one straight arm through where your head used to be.',
+        fx: 'vane',
+        hits: [{
+          f: 32, dmg: 62, active: 5, guard: 'mid',
+          hitstun: 34, blockstun: 18, kb: 400, lift: 90,
+          knockdown: true, guardCrush: 40,
+          box: { x: 14, y: 46, w: 100, h: 40 },
+        }],
+        steps: [{ f: 30, vx: 90 }],
+      },
+
+      portrait: {
+        w: 240, h: 260,
+        shapes: [
+          { t: 'rect', x: 0, y: 0, w: 240, h: 260, fill: '#38D2F0' },
+          { t: 'poly', pts: [[0, 170], [240, 200], [240, 260], [0, 260]], fill: '#176B85' },
+          { t: 'circle', x: 120, y: 76, r: 104, stroke: '#B388FF', width: 9 },
+          { t: 'poly', pts: [[46, 260], [74, 182], [166, 182], [194, 260]], fill: '#0B2430' },
+          { t: 'rect', x: 108, y: 150, w: 24, h: 110, fill: '#B388FF' },
+          { t: 'circle', x: 120, y: 112, r: 56, fill: '#0B2430' },
+          { t: 'rect', x: 64, y: 100, w: 112, h: 13, fill: '#F2FAFF' },
+          { t: 'arc', x: 120, y: 146, r: 56, from: 0, to: 180, stroke: '#B388FF', width: 8 },
+          { t: 'rect', x: 0, y: 234, w: 240, h: 26, fill: '#B388FF' },
+        ],
+        nameColor: '#0B2430',
+      },
+
       blurb: 'Every attack box is nine units wider than anyone else\'s, so she wins trades she '
         + 'has no business winning. Slow enough that a whiff is a real invitation.',
+    },
+
+    // ------------------------------------------------------------ CLASSIC
+    {
+      id: 'classic',
+      name: 'THE STICKMAN',
+      title: 'Fighter 00',
+      role: 'All-rounder',
+      tagline: 'No gimmicks. No excuses. Every stat dead average, every option open.',
+      quote: 'Floor one, day one.',
+      philosophy: 'The baseline. If a floor is beatable, it is beatable with him.',
+      recognisable: 'Plain white strokes and a blue trim. Nothing to read, nothing to telegraph.',
+
+      colors: {
+        body: '#F2F4F8', back: '#9AA3B5', backBright: '#9AA3B5',
+        accent: '#6EA8FF', trim: '#C9D6EA', aura: '#6EA8FF',
+      },
+      build: {
+        scale: 1.0,
+        limbs: {
+          thigh: 28, shin: 26, upperArm: 24, foreArm: 22,
+          shoulderW: 9, hipW: 7, headR: 11, torso: 34,
+          limbW: 7, torsoW: 8.05,
+        },
+      },
+      stats: { hp: 1, atk: 1, spd: 1, aspd: 1, crit: 0, rage: 1, reach: 0 },
+      stance: {
+        lean: -2,
+        idle: { amp: 1.6, hz: 1.6, hold: 0 },
+        walk: { stride: 12, backRatio: 0.85 },
+        pose: null,                      // uses the engine's default idle
+      },
+      attachments: [],
+      gearLooks: { low: [], mid: [], high: [] },
+      signature: null,
+
+      portrait: {
+        w: 240, h: 260,
+        shapes: [
+          { t: 'rect', x: 0, y: 0, w: 240, h: 260, fill: '#2A3350' },
+          { t: 'poly', pts: [[0, 186], [240, 160], [240, 260], [0, 260]], fill: '#1B2138' },
+          { t: 'poly', pts: [[54, 260], [88, 180], [152, 180], [186, 260]], fill: '#F2F4F8' },
+          { t: 'circle', x: 120, y: 116, r: 56, fill: '#F2F4F8' },
+          { t: 'circle', x: 142, y: 108, r: 9, fill: '#2A3350' },
+          { t: 'rect', x: 0, y: 234, w: 240, h: 26, fill: '#6EA8FF' },
+        ],
+        nameColor: '#06121F',
+      },
+
+      blurb: 'No stat bias and no signature — every shared combo, thrown at face value. '
+        + 'The cleanest read on what the tower actually asks of you.',
     },
   ];
 
@@ -1498,8 +1765,288 @@ button { font-family: inherit; cursor: pointer; }
     return c.signature ? base.concat([c.signature]) : base.slice();
   }
 
+  /* low / mid / high band from the player's average equipped tier. */
+  function tierBand(avgTier) {
+    if (avgTier >= 6) return 'high';
+    if (avgTier >= 3) return 'mid';
+    return 'low';
+  }
+  const BAND_INDEX = { low: 0, mid: 1, high: 2 };
+
+  /* The full part list to draw for a character at a given gear band. */
+  function partsFor(character, band) {
+    const idx = BAND_INDEX[band];
+    const base = character.attachments.filter((a) => !a.minTier || idx >= BAND_INDEX.mid);
+    const extra = (character.gearLooks && character.gearLooks[band]) || [];
+    return base.concat(extra);
+  }
+
   root.ST = root.ST || {};
-  root.ST.Characters = { CHARACTERS, BY_ID, get, specialsFor };
+  root.ST.Characters = { CHARACTERS, BY_ID, get, specialsFor, tierBand, partsFor, BAND_INDEX };
+})(window);
+
+/* ===== src/campaign.js ===== */
+/* Stickman Tower — the campaign layer.
+ *
+ * One tower, three stories. Each character gets an opening, three rival
+ * encounters that replace the Warden on those floors, and an ending on 100.
+ * Nothing here touches the fighting: a beat is a card shown before or after a
+ * fight, and a rival is a boss wearing a player character's data.
+ */
+(function (root) {
+  'use strict';
+
+  const RIVAL_FLOORS = [20, 50, 80];
+
+  /* The three meetings escalate. The first is an introduction you are meant to
+   * be able to take; the last is meant to hurt. */
+  const RIVAL_SCALE = { 20: 0.88, 50: 1.00, 80: 1.08 };
+
+  /* Who stands in your way. Raza and Vane are each other's problem; the
+   * Stickman gets the tower's own former champion. */
+  const RIVAL_OF = { raza: 'vane', vane: 'raza', classic: 'vane' };
+
+  const STORY = {
+    raza: {
+      intro: {
+        title: 'FLOOR ONE',
+        speaker: 'RAZA',
+        lines: [
+          'Ninety-nine floors of people who think standing still is a plan.',
+          'Then the hundredth, and whatever is left of the one who walked away from it.',
+          'I am not here to prove anything. I am here because the lift is broken and the stairs are full of people.',
+        ],
+        sting: 'Get in. Stay in.',
+      },
+      rival: {
+        20: {
+          title: 'FLOOR TWENTY',
+          speaker: 'VANE',
+          lines: [
+            'You are quick. Everyone is quick on floor twenty.',
+            'Quick gets you to fifty. After that you need a reason.',
+            'Show me what happens when I do not move.',
+          ],
+          sting: 'VANE blocks the stairwell.',
+          after: [
+            'She did not chase. She did not retreat. She just made the room smaller.',
+            'Fifty, then. I will bring a reason.',
+          ],
+        },
+        50: {
+          title: 'FLOOR FIFTY',
+          speaker: 'VANE',
+          lines: [
+            'Halfway. This is where the quick ones start managing their health bar.',
+            'I held this floor for six years and never once threw the first punch.',
+            'You will. That is the whole problem with you.',
+          ],
+          sting: 'She is not testing you any more.',
+          after: [
+            'She was right. I threw first. I always throw first.',
+            'But I threw first and I was still standing, and that is new.',
+          ],
+        },
+        80: {
+          title: 'FLOOR EIGHTY',
+          speaker: 'VANE',
+          lines: [
+            'Twenty floors left and you are still walking forward.',
+            'I came down here to stop you. I am not certain that is still the plan.',
+            'Last one. Properly, this time.',
+          ],
+          sting: 'No more lessons.',
+          after: [
+            'She stepped back at the end. Not beaten — finished.',
+            '"Go on then," she said. So I went on.',
+          ],
+        },
+      },
+      ending: {
+        title: 'THE HUNDREDTH FLOOR',
+        speaker: 'RAZA',
+        lines: [
+          'The Ascendant does not talk. Good. Neither do I, up here.',
+          'A hundred floors of people who wanted me to stop moving.',
+          'Not one of them managed it.',
+        ],
+        sting: 'RAZA — TOWER CLEARED',
+      },
+    },
+
+    vane: {
+      intro: {
+        title: 'FLOOR ONE',
+        speaker: 'VANE',
+        lines: [
+          'I held the hundredth floor for six years. Then I walked down it.',
+          'Something has been climbing since. Fast, loud, and from the bottom.',
+          'I would rather meet her on my way up than wait for her at the top.',
+        ],
+        sting: 'Stand where I tell you to stand.',
+      },
+      rival: {
+        20: {
+          title: 'FLOOR TWENTY',
+          speaker: 'RAZA',
+          lines: [
+            'You are the one who quit.',
+            'Six years at the top and you gave it back. To who? For what?',
+            'Move, or be moved.',
+          ],
+          sting: 'RAZA does not wait to be invited.',
+          after: [
+            'She came in before I had finished speaking. Of course she did.',
+            'Twenty floors of momentum and no idea what she is running at.',
+          ],
+        },
+        50: {
+          title: 'FLOOR FIFTY',
+          speaker: 'RAZA',
+          lines: [
+            'Still measuring the gap? Still counting frames?',
+            'Here is the thing about the gap. I can cross it faster than you can close it.',
+            'Count that.',
+          ],
+          sting: 'She has learned something. That is worse.',
+          after: [
+            'She has stopped throwing everything. She is choosing now.',
+            'I taught her that by standing still. I am not sure I meant to.',
+          ],
+        },
+        80: {
+          title: 'FLOOR EIGHTY',
+          speaker: 'RAZA',
+          lines: [
+            'Twenty to go and you are still behind me.',
+            'You keep giving me room and I keep taking it. That is not a strategy, that is a habit.',
+            'Come on. Take one back.',
+          ],
+          sting: 'Take one back.',
+          after: [
+            'I took one back.',
+            'She laughed, which I had not planned for, and went up the stairs anyway.',
+          ],
+        },
+      },
+      ending: {
+        title: 'THE HUNDREDTH FLOOR',
+        speaker: 'VANE',
+        lines: [
+          'Six years I stood on this floor and called it a career.',
+          'I came back up to find out whether I had been holding it, or hiding on it.',
+          'The Ascendant is down. I am not staying this time.',
+        ],
+        sting: 'VANE — TOWER RECLAIMED',
+      },
+    },
+
+    classic: {
+      intro: {
+        title: 'FLOOR ONE',
+        speaker: '',
+        lines: [
+          'No name on the board. No style anyone can pick out of a line-up.',
+          'One hundred floors, one boss each, and a lift that has been broken since before you were born.',
+          'Start climbing.',
+        ],
+        sting: 'One floor at a time.',
+      },
+      rival: {
+        20: {
+          title: 'FLOOR TWENTY',
+          speaker: 'VANE',
+          lines: [
+            'Nothing about you tells me anything. No tell, no habit, no favourite hand.',
+            'That is either very good or you have simply never been made to choose.',
+            'Let us find out which.',
+          ],
+          sting: 'The former champion is curious.',
+          after: ['She left without a word. You are fairly sure that is a compliment.'],
+        },
+        50: {
+          title: 'FLOOR FIFTY',
+          speaker: 'VANE',
+          lines: [
+            'Still no habits. Fifty floors and you have not flinched into a pattern once.',
+            'Do you know how rare that is? Neither do you. That is the point.',
+          ],
+          sting: 'Halfway, and still unreadable.',
+          after: ['"Carry on," she says, and steps aside. She has never stepped aside.'],
+        },
+        80: {
+          title: 'FLOOR EIGHTY',
+          speaker: 'VANE',
+          lines: [
+            'Last one. After this the tower gets to ask the questions instead of me.',
+            'Whatever you are, be it properly.',
+          ],
+          sting: 'Be it properly.',
+          after: ['She holds the door. Twenty floors left, and nobody standing in them.'],
+        },
+      },
+      ending: {
+        title: 'THE HUNDREDTH FLOOR',
+        speaker: '',
+        lines: [
+          'The Ascendant falls like all the others did. Same fists. Same floor.',
+          'A hundred bosses and not one of them ever worked you out,',
+          'because there was never anything to work out. You just kept climbing.',
+        ],
+        sting: 'TOWER CLEARED',
+      },
+    },
+  };
+
+  function rivalOf(characterId) { return RIVAL_OF[characterId] || 'vane'; }
+
+  function isRivalFloor(floor) { return RIVAL_FLOORS.indexOf(floor) !== -1; }
+
+  /* The beat to show before a fight, or null. */
+  function beatBefore(floor, characterId, save) {
+    const story = STORY[characterId] || STORY.classic;
+    if (floor === 1 && !seen(save, characterId, 'intro')) {
+      return { key: 'intro', kind: 'intro', data: story.intro };
+    }
+    if (isRivalFloor(floor) && story.rival[floor] && !seen(save, characterId, 'pre' + floor)) {
+      return { key: 'pre' + floor, kind: 'rival', data: story.rival[floor], rival: rivalOf(characterId) };
+    }
+    return null;
+  }
+
+  /* The beat to show after winning, or null. */
+  function beatAfter(floor, characterId, save) {
+    const story = STORY[characterId] || STORY.classic;
+    if (floor === 100) {
+      return { key: 'ending', kind: 'ending', data: story.ending };
+    }
+    if (isRivalFloor(floor) && story.rival[floor] && !seen(save, characterId, 'post' + floor)) {
+      const b = story.rival[floor];
+      return {
+        key: 'post' + floor,
+        kind: 'after',
+        data: { title: b.title, speaker: characterId.toUpperCase(), lines: b.after, sting: '' },
+        rival: rivalOf(characterId),
+      };
+    }
+    return null;
+  }
+
+  function seen(save, characterId, key) {
+    return !!(save.seen && save.seen[characterId + ':' + key]);
+  }
+  function markSeen(save, characterId, key) {
+    save.seen = save.seen || {};
+    save.seen[characterId + ':' + key] = true;
+  }
+
+  root.ST = root.ST || {};
+  function rivalScale(floor) { return RIVAL_SCALE[floor] || 1; }
+
+  root.ST.Campaign = {
+    STORY, RIVAL_FLOORS, RIVAL_SCALE, rivalOf, isRivalFloor, rivalScale,
+    beatBefore, beatAfter, seen, markSeen,
+  };
 })(window);
 
 /* ===== src/floors.js ===== */
@@ -1893,6 +2440,17 @@ button { font-family: inherit; cursor: pointer; }
     },
 
     character() { return root.ST.Characters.get(P.data.character); },
+
+    /* Average equipped tier, which decides which gear look a character wears. */
+    gearTier() {
+      let sum = 0, n = 0;
+      for (const slot in P.data.equipped) {
+        const id = P.data.equipped[slot];
+        if (id && ITEM_BY_ID[id]) { sum += ITEM_BY_ID[id].tier; n++; }
+      }
+      return n ? sum / n : 1;
+    },
+    gearBand() { return root.ST.Characters.tierBand(P.gearTier()); },
     chooseCharacter(id) {
       P.data.character = id;
       P.save();
@@ -2773,7 +3331,7 @@ button { font-family: inherit; cursor: pointer; }
   // for front + back limbs. Angles: 0 = straight down, 90 = straight forward.
   function basePose() {
     return {
-      lean: 6, hip: 0, headTilt: 0,
+      lean: 6, hip: 0, headTilt: 0, armLen: 1, legLen: 1,
       armF: [18, 26], armB: [-14, 30],
       legF: [10, 10], legB: [-12, 12],
       stretch: 1,
@@ -2783,6 +3341,9 @@ button { font-family: inherit; cursor: pointer; }
   function lerpPose(a, b, t) {
     const o = {};
     o.lean = U.lerp(a.lean, b.lean, t);
+    o.bounce = U.lerp(a.bounce || 0, b.bounce || 0, t);
+    o.armLen = U.lerp(a.armLen === undefined ? 1 : a.armLen, b.armLen === undefined ? 1 : b.armLen, t);
+    o.legLen = U.lerp(a.legLen === undefined ? 1 : a.legLen, b.legLen === undefined ? 1 : b.legLen, t);
     o.hip = U.lerp(a.hip, b.hip, t);
     o.headTilt = U.lerp(a.headTilt, b.headTilt, t);
     o.stretch = U.lerp(a.stretch === undefined ? 1 : a.stretch, b.stretch === undefined ? 1 : b.stretch, t);
@@ -2833,19 +3394,27 @@ button { font-family: inherit; cursor: pointer; }
   /* Resolve the pose for a fighter this frame. Attacks interpolate through
    * windup -> strike -> recover using real frame data so the visuals and the
    * hitboxes always agree. */
-  function poseFor(f, t) {
-    const p = basePoseFor(f, t);
+  /* A character's idle is their own stance, taken straight from the sheet, not
+   * the engine default with an offset. Everything else — attacks, hurt, walk —
+   * departs from and returns to it. */
+  function characterIdle(f) {
+    const base = basePose();
     const st = f.character && f.character.stance;
-    if (!st || (!st.lean && !st.guard)) return p;
-    // lerpPose(p, p, 0) is a cheap deep clone — the POSE table is shared and
-    // must never be mutated.
-    const o = lerpPose(p, p, 0);
-    o.lean += st.lean || 0;
-    if (st.guard) {
-      o.armF[0] += st.guard;
-      o.armB[0] += st.guard;
+    if (!st) return base;
+    if (st.pose) {
+      base.armF = st.pose.armF.slice();
+      base.armB = st.pose.armB.slice();
+      base.legF = st.pose.legF.slice();
+      base.legB = st.pose.legB.slice();
     }
-    return o;
+    if (st.lean !== undefined) base.lean = st.lean;
+    if (st.armLen !== undefined) base.armLen = st.armLen;
+    if (st.legLen !== undefined) base.legLen = st.legLen;
+    return base;
+  }
+
+  function poseFor(f, t) {
+    return basePoseFor(f, t);
   }
 
   /* Resolve the animation pose before character stance is layered on. */
@@ -2855,19 +3424,47 @@ button { font-family: inherit; cursor: pointer; }
 
     switch (anim) {
       case 'idle': {
-        const b = (Math.sin(t * 3.2) + 1) / 2;
-        return lerpPose(POSE.idle, POSE.idle2, b);
+        if (!f.character || !f.character.stance || !f.character.stance.pose) {
+          const b = (Math.sin(t * 3.2) + 1) / 2;
+          return lerpPose(POSE.idle, POSE.idle2, b);
+        }
+        const cfg = f.character.stance.idle || { amp: 1.6, hz: 1.6, hold: 0 };
+        let phase = Math.sin(t * cfg.hz * Math.PI * 2);
+        if (cfg.hold) {
+          // Flatten the peaks so the pose lingers at the top of the breath.
+          const k = 1 + cfg.hold * 4;
+          phase = Math.tanh(phase * k) / Math.tanh(k);
+        }
+        const o = characterIdle(f);
+        o.bounce = (0.5 + 0.5 * phase) * cfg.amp;
+        o.armF[0] += phase * 1.6;
+        o.armB[0] -= phase * 1.6;
+        o.lean += phase * 0.8;
+        return o;
       }
       case 'walk': case 'walkBack': {
-        const s = Math.sin(walkPhase), c = Math.cos(walkPhase);
-        const p = pose({
-          lean: anim === 'walk' ? 10 : 4,
-          armF: [18 - s * 26, 26 + Math.abs(s) * 10],
-          armB: [-14 + s * 26, 30 + Math.abs(s) * 10],
-          legF: [10 + s * 32, 10 + Math.max(0, c) * 26],
-          legB: [-12 - s * 32, 12 + Math.max(0, -c) * 26],
-        });
-        return p;
+        const idle = characterIdle(f);
+        const wcfg = (f.character && f.character.stance && f.character.stance.walk) || { stride: 12 };
+        const k = wcfg.stride / 12;
+        // Longer strides mean a slower cadence, which is most of the read.
+        const ph = t * 8 / k;
+        const sn = Math.sin(ph), cs = Math.cos(ph);
+        if (!f.character || !f.character.stance || !f.character.stance.pose) {
+          return pose({
+            lean: anim === 'walk' ? 10 : 4,
+            armF: [18 - sn * 26, 26 + Math.abs(sn) * 10],
+            armB: [-14 + sn * 26, 30 + Math.abs(sn) * 10],
+            legF: [10 + sn * 32, 10 + Math.max(0, cs) * 26],
+            legB: [-12 - sn * 32, 12 + Math.max(0, -cs) * 26],
+          });
+        }
+        const o = characterIdle(f);
+        o.legF = [idle.legF[0] + sn * 28 * k, idle.legF[1] + Math.max(0, cs) * 22 * k];
+        o.legB = [idle.legB[0] - sn * 28 * k, idle.legB[1] + Math.max(0, -cs) * 22 * k];
+        o.armF = [idle.armF[0] - sn * 14, idle.armF[1]];
+        o.armB = [idle.armB[0] + sn * 14, idle.armB[1]];
+        o.bounce = Math.abs(sn) * 1.2;
+        return o;
       }
       case 'dash': return lerpPose(POSE.idle, POSE.land, 0.5);
       case 'crouch': return POSE.crouch;
@@ -2897,7 +3494,7 @@ button { font-family: inherit; cursor: pointer; }
     if (f.state === 'attack' && f.move) {
       const m = f.move;
       const fr = f.frame;
-      const key = attackPoses(m.id);
+      const key = attackPoses(m.id, f);
       if (fr < m.startup) {
         return lerpPose(key.idle, key.wind, U.easeOut(fr / Math.max(1, m.startup)));
       }
@@ -2915,20 +3512,22 @@ button { font-family: inherit; cursor: pointer; }
     return POSE.idle;
   }
 
-  function attackPoses(id) {
+  function attackPoses(id, f) {
+    const neutral = f && f.character && f.character.stance && f.character.stance.pose
+      ? characterIdle(f) : POSE.idle;
     switch (id) {
-      case 'jab': return { idle: POSE.idle, wind: POSE.jabWind, hit: POSE.jabHit };
-      case 'cross': return { idle: POSE.idle, wind: POSE.crossWind, hit: POSE.crossHit };
-      case 'kick': return { idle: POSE.idle, wind: POSE.kickWind, hit: POSE.kickHit };
+      case 'jab': return { idle: neutral, wind: POSE.jabWind, hit: POSE.jabHit };
+      case 'cross': return { idle: neutral, wind: POSE.crossWind, hit: POSE.crossHit };
+      case 'kick': return { idle: neutral, wind: POSE.kickWind, hit: POSE.kickHit };
       case 'lowJab': return { idle: POSE.crouch, wind: POSE.crouch, hit: POSE.lowJabHit };
       case 'bodyBlow': return { idle: POSE.crouch, wind: POSE.bodyWind, hit: POSE.bodyHit };
       case 'sweep': return { idle: POSE.crouch, wind: POSE.sweepWind, hit: POSE.sweepHit };
       case 'airPunch': return { idle: POSE.fall, wind: POSE.jabWind, hit: POSE.airPunchP };
       case 'airCross': return { idle: POSE.fall, wind: POSE.crossWind, hit: POSE.airPunchP };
       case 'airKick': return { idle: POSE.fall, wind: POSE.kickWind, hit: POSE.airKickP };
-      case 'lunge': return { idle: POSE.idle, wind: POSE.crossWind, hit: POSE.lungeHit };
-      case 'spinKick': return { idle: POSE.idle, wind: POSE.spinWind, hit: POSE.spinHit };
-      default: return { idle: POSE.idle, wind: POSE.jabWind, hit: POSE.jabHit };
+      case 'lunge': return { idle: neutral, wind: POSE.crossWind, hit: POSE.lungeHit };
+      case 'spinKick': return { idle: neutral, wind: POSE.spinWind, hit: POSE.spinHit };
+      default: return { idle: neutral, wind: POSE.jabWind, hit: POSE.jabHit };
     }
   }
 
@@ -3001,6 +3600,41 @@ button { font-family: inherit; cursor: pointer; }
     trail(x, y, color, scale) {
       addFx({ type: 'trail', x, y, life: 0.22, max: 0.22, color: color || '#ffffff', scale: scale || 1 });
     },
+    /* A frozen copy of the fighter, redrawn behind them. Used for Raza's
+     * step-in, where the sheet asks for three ghosts at 40/25/12%. */
+    afterimage(f, alpha, life) {
+      addFx({
+        type: 'ghost', life: life || 0.3, max: life || 0.3, alpha: alpha,
+        snap: {
+          x: f.x, y: f.y, facing: f.facing, scale: f.scale, character: f.character,
+          colors: f.colors, anim: f.anim, animT: f.animT, state: f.state,
+          frame: f.frame, move: f.move, special: f.special, vy: f.vy,
+          isPlayer: f.isPlayer, gear: null, meter: 0, flash: 0, tonicFlash: 0,
+          blocking: false, partFlash: 0, _att: null,
+          hurtbox: () => ({ x: 0, y: 0, w: 0, h: 0 }), activeHits: () => [],
+        },
+      });
+    },
+    /* A wave that runs along the floor away from the fighter. */
+    groundWave(x, y, dir, color, distance, seconds) {
+      addFx({
+        type: 'gwave', x, y, dir, color: color || '#8A5CFF',
+        speed: (distance || 120) / (seconds || 0.17),
+        life: seconds || 0.17, max: seconds || 0.17,
+      });
+    },
+    /* Sparks thrown along one vector rather than in a ball. */
+    shards(x, y, angleRad, count, color, spread, power) {
+      for (let i = 0; i < count; i++) {
+        const a = angleRad + (Math.random() - 0.5) * (spread === undefined ? 0.8 : spread);
+        const sp = (0.6 + Math.random() * 0.8) * (power || 320);
+        addFx({
+          type: 'spark', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          life: 0.22 + Math.random() * 0.18, max: 0.4,
+          color: color || '#FFC93C', size: 2 + Math.random() * 2,
+        });
+      }
+    },
     clear() { fx.length = 0; },
   };
 
@@ -3012,6 +3646,7 @@ button { font-family: inherit; cursor: pointer; }
       if (p.vx !== undefined) p.x += p.vx * dt;
       if (p.vy !== undefined) { p.y += p.vy * dt; p.vy += (p.type === 'spark' ? 900 : 200) * dt; }
       if (p.type === 'ring') p.r = U.lerp(p.r, p.r1, 1 - Math.pow(p.life / p.max, 2));
+      if (p.type === 'gwave') p.x += p.dir * p.speed * dt;
     }
   }
 
@@ -3041,6 +3676,25 @@ button { font-family: inherit; cursor: pointer; }
         ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.stroke();
         ctx.lineWidth = 2 * a;
         ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.6, 0, 7); ctx.stroke();
+      } else if (p.type === 'ghost') {
+        ctx.globalAlpha = p.alpha * (p.life / p.max);
+        drawFighter(ctx, p.snap, { noShadow: true, noAttach: true, dt: 0 });
+        ctx.globalAlpha = 1;
+      } else if (p.type === 'gwave') {
+        const k = p.life / p.max;
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = k;
+        const hgt = 18 * k + 6;
+        ctx.beginPath();
+        ctx.moveTo(p.x - p.dir * 10, p.y);
+        ctx.quadraticCurveTo(p.x, p.y - hgt, p.x + p.dir * 10, p.y);
+        ctx.stroke();
+        ctx.globalAlpha = k * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(p.x - p.dir * 20, p.y);
+        ctx.quadraticCurveTo(p.x - p.dir * 6, p.y - hgt * 0.6, p.x + p.dir * 4, p.y);
+        ctx.stroke();
       } else if (p.type === 'trail') {
         ctx.strokeStyle = p.color; ctx.lineWidth = 2;
         ctx.globalAlpha = a * 0.35;
@@ -3227,26 +3881,39 @@ button { font-family: inherit; cursor: pointer; }
   R.hexA = hexA;
 
   // ---------------------------------------------------------- attachments
-  /* The soft parts — ponytails, sashes, coat tails — are verlet ropes hung off
-   * the skeleton joints the renderer already computes. They are what stop a
+  /* The soft parts — tails, sashes, coat tails, braids — are verlet ropes hung
+   * off the skeleton joints the renderer already computes. They are what stop a
    * character reading as a plain stick figure: the body stops, the hair does
-   * not, and the eye reads weight and speed from the lag. */
+   * not, and the eye reads weight and speed from the lag.
+   *
+   * Rest angles use the character sheet's convention: degrees, 0 = forward,
+   * counter-clockwise, y up. Canvas y is down, hence the negated sine. */
+  function restVec(cfg, facing) {
+    if (cfg.angle !== undefined && typeof cfg.angle === 'number' && cfg.type === 'chain') {
+      const a = U.rad(cfg.angle);
+      return { x: Math.cos(a) * facing, y: -Math.sin(a) };
+    }
+    const r = cfg.rest || [-1, 0];
+    return { x: r[0] * facing, y: r[1] };
+  }
 
-  function chainState(f, cfg, anchor, s, facing) {
+  function partLength(cfg, band) {
+    const mul = cfg.lenByTier ? cfg.lenByTier[root.ST.Characters.BAND_INDEX[band]] : 1;
+    return cfg.length * mul;
+  }
+
+  function chainState(f, cfg, anchor, s, facing, length) {
     if (!f._att) f._att = {};
     let st = f._att[cfg.id];
     const count = (cfg.segments || 4) + 1;
     if (!st || st.pts.length !== count) {
-      const rest = cfg.rest || [-1, 0];
-      const segLen = (cfg.length / (count - 1)) * s;
+      const d = restVec(cfg, facing);
+      const segLen = (length / (count - 1)) * s;
       const pts = [];
       for (let i = 0; i < count; i++) {
-        pts.push({
-          x: anchor.x + rest[0] * facing * segLen * i,
-          y: anchor.y + rest[1] * segLen * i,
-          px: anchor.x + rest[0] * facing * segLen * i,
-          py: anchor.y + rest[1] * segLen * i,
-        });
+        const x = anchor.x + d.x * segLen * i;
+        const y = anchor.y + d.y * segLen * i;
+        pts.push({ x, y, px: x, py: y });
       }
       st = { pts };
       f._att[cfg.id] = st;
@@ -3254,9 +3921,9 @@ button { font-family: inherit; cursor: pointer; }
     return st;
   }
 
-  function stepChain(st, anchor, cfg, s, facing, h) {
+  function stepChain(st, anchor, cfg, s, facing, h, length) {
     const pts = st.pts;
-    const segLen = (cfg.length / (pts.length - 1)) * s;
+    const segLen = (length / (pts.length - 1)) * s;
     pts[0].x = anchor.x; pts[0].y = anchor.y;
     pts[0].px = anchor.x; pts[0].py = anchor.y;
 
@@ -3271,14 +3938,14 @@ button { font-family: inherit; cursor: pointer; }
       p.y += vy + g * h * h;
     }
 
-    // Pull back toward the rest direction so a ponytail trails rather than hangs.
+    // Pull back toward the rest direction, so a swept tail holds its shape.
     const k = cfg.stiffness || 0;
     if (k > 0) {
-      const rest = cfg.rest || [-1, 0];
+      const d = restVec(cfg, facing);
       for (let i = 1; i < pts.length; i++) {
         const prev = pts[i - 1], p = pts[i];
-        p.x += (prev.x + rest[0] * facing * segLen - p.x) * k * 0.5;
-        p.y += (prev.y + rest[1] * segLen - p.y) * k * 0.5;
+        p.x += (prev.x + d.x * segLen - p.x) * k * 0.5;
+        p.y += (prev.y + d.y * segLen - p.y) * k * 0.5;
       }
     }
 
@@ -3310,17 +3977,42 @@ button { font-family: inherit; cursor: pointer; }
     }
   }
 
-  function drawRigid(ctx, cfg, joint, limbAngle, s, facing, color) {
+  function drawRigid(ctx, cfg, joint, limbAngle, s, facing, color, band) {
+    const off = cfg.origin || cfg.offset || [0, 0];
+    const cx = joint.x + off[0] * facing * s;
+    const cy = joint.y - off[1] * s;          // origin y is measured up, like the sheet
+
+    if (cfg.shape === 'ring') {
+      const r = (cfg.radiusByTier ? cfg.radiusByTier[root.ST.Characters.BAND_INDEX[band]] : cfg.radius) * s;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = (cfg.stroke || 1.6) * s;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.stroke();
+      return;
+    }
+
     const a = cfg.angle === 'limb' ? limbAngle : (cfg.angle || 0);
-    const d = dirVec(a, facing);
-    const off = cfg.offset || [0, 0];
+    if (cfg.shape === 'arc') {
+      // A 180-degree cap opening downward, rigid to its joint.
+      ctx.strokeStyle = color;
+      ctx.lineWidth = (cfg.stroke || 4) * s;
+      ctx.lineCap = 'butt';
+      const span = U.rad(cfg.span || 180);
+      const mid = -Math.PI / 2 + U.rad(cfg.angle || 0) * facing;
+      ctx.beginPath();
+      ctx.arc(cx, cy, (cfg.radius || 7) * s, mid - span / 2, mid + span / 2);
+      ctx.stroke();
+      ctx.lineCap = 'round';
+      return;
+    }
+
+    const d = cfg.angle === 'limb' ? dirVec(a, facing) : dirVec(a, facing);
     ctx.save();
-    ctx.translate(joint.x + off[0] * facing * s, joint.y + off[1] * s);
+    ctx.translate(cx, cy);
     ctx.rotate(Math.atan2(d.y, d.x));
     ctx.fillStyle = color;
     const w = (cfg.size ? cfg.size[0] : 10) * s;
     const h = (cfg.size ? cfg.size[1] : 6) * s;
-    if (cfg.shape === 'wedge') {
+    if (cfg.shape === 'wedge' || cfg.shape === 'tri') {
       ctx.beginPath();
       ctx.moveTo(-w * 0.3, -h / 2);
       ctx.lineTo(w * 0.7, 0);
@@ -3329,6 +4021,14 @@ button { font-family: inherit; cursor: pointer; }
       ctx.fill();
     } else if (cfg.shape === 'disc') {
       ctx.beginPath(); ctx.arc(0, 0, w / 2, 0, 7); ctx.fill();
+    } else if (cfg.shape === 'capsule') {
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = h;
+      ctx.beginPath();
+      ctx.moveTo(-w / 2 + h / 2, 0);
+      ctx.lineTo(w / 2 - h / 2, 0);
+      ctx.stroke();
     } else {
       ctx.beginPath();
       const r = Math.min(w, h) * 0.35;
@@ -3343,33 +4043,50 @@ button { font-family: inherit; cursor: pointer; }
     ctx.restore();
   }
 
-  function attachColor(f, name) {
+  function attachColor(f, name, flashing) {
     const c = (f.character && f.character.colors) || f.colors;
+    if (flashing && c.aura) return c.aura;
     if (name === 'body') return c.body || f.colors.body;
     if (name === 'accent') return c.accent || f.colors.accent;
-    if (name === 'trim') return c.trim || shade(c.accent || f.colors.accent, -0.25);
+    if (name === 'trim') return c.trim || shade(c.accent || f.colors.accent, 0.5);
+    if (name === 'aura') return c.aura || c.accent || f.colors.accent;
+    if (name === 'back') return f._backColor || c.back || shade(c.body, -0.35);
     return name || f.colors.accent;
   }
 
-  /* Step every rope once per frame, then draw the requested layer. */
-  function attachments(ctx, f, joints, angles, s, facing, h, layer) {
-    const list = (f.character && f.character.attachments) || null;
-    if (!list || !list.length) return;
+  /* Step every rope once per frame (on the back pass), then draw one layer. */
+  function attachments(ctx, f, joints, angles, s, facing, h, layer, band) {
+    const ch = f.character;
+    if (!ch) return;
+    const list = root.ST.Characters.partsFor(ch, band);
+    if (!list.length) return;
+    const flashing = f.partFlash > 0;
     list.forEach((cfg) => {
       const joint = joints[cfg.joint];
       if (!joint) return;
-      const front = cfg.front === undefined ? (cfg.type === 'shape') : cfg.front;
+      const isFront = cfg.layer ? cfg.layer === 'front' : cfg.type === 'shape';
       if (cfg.type === 'chain') {
-        const st = chainState(f, cfg, joint, s, facing);
-        if (layer === 'back') stepChain(st, joint, cfg, s, facing, h);
-        if ((layer === 'front') === !!front) drawChain(ctx, st, cfg, s, attachColor(f, cfg.color));
-      } else if ((layer === 'front') === !!front) {
-        drawRigid(ctx, cfg, joint, angles[cfg.joint] || 0, s, facing, attachColor(f, cfg.color));
+        const length = partLength(cfg, band);
+        const origin = cfg.origin
+          ? { x: joint.x + cfg.origin[0] * facing * s, y: joint.y - cfg.origin[1] * s }
+          : joint;
+        const st = chainState(f, cfg, origin, s, facing, length);
+        if (layer === 'back') stepChain(st, origin, cfg, s, facing, h, length);
+        if ((layer === 'front') === isFront) {
+          drawChain(ctx, st, cfg, s, attachColor(f, cfg.color, flashing && cfg.flashOn === 'hit'));
+        }
+      } else if ((layer === 'front') === isFront) {
+        drawRigid(ctx, cfg, joint, angles[cfg.joint] || 0, s, facing,
+          attachColor(f, cfg.color, flashing && cfg.flashOn === 'hit'), band);
       }
     });
   }
 
+
   // -------------------------------------------------------- fighter render
+  /* Every fighter is drawn from the same skeleton, but the bone lengths, stroke
+   * weights and head radius come from the character's build block, so RAZA and
+   * VANE are genuinely different bodies rather than recoloured copies. */
   function drawFighter(ctx, f, opts) {
     const o = opts || {};
     const s = f.scale;
@@ -3377,65 +4094,90 @@ button { font-family: inherit; cursor: pointer; }
     const facing = f.facing;
     const x = f.x;
     const y = f.y;
+    const ch = f.character;
+    const B = (ch && ch.build && ch.build.limbs) || P;
+    const band = o.band || 'mid';
 
-    const hipDrop = p.hip * s;
-    const pelvis = { x: x + Math.sin(U.rad(p.lean)) * 4 * facing, y: y - P.pelvis * s + hipDrop };
+    // Joint heights follow the bones: shorter legs means a lower pelvis, or the
+    // feet would not reach the floor.
+    const pelvisH = (B.thigh + B.shin) * 0.963;
+    const neckH = pelvisH + (B.torso || 34);
+    const headH = neckH + 14;
+    const headR = B.headR * s;
+    const lw = (B.limbW || 7) * s;
+    const torsoW = (B.torsoW || lw * 1.15) * s;
+
+    const hipDrop = (p.hip + (p.bounce || 0)) * s;
+    const pelvis = { x: x + Math.sin(U.rad(p.lean)) * 4 * facing, y: y - pelvisH * s + hipDrop };
     const leanV = dirVec(180 + p.lean, facing);
-    const torsoLen = (P.neck - P.pelvis) * s;
+    const torsoLen = (neckH - pelvisH) * s;
     const neck = { x: pelvis.x + leanV.x * torsoLen, y: pelvis.y + leanV.y * torsoLen };
-    const headC = { x: neck.x + leanV.x * (P.headY - P.neck + P.headR * 0.4) * s, y: neck.y + leanV.y * (P.headY - P.neck + P.headR * 0.4) * s };
+    const headC = {
+      x: neck.x + leanV.x * (headH - neckH + B.headR * 0.4) * s,
+      y: neck.y + leanV.y * (headH - neckH + B.headR * 0.4) * s,
+    };
 
-    const shoulderF = { x: neck.x + facing * P.shoulderW * 0.35 * s, y: neck.y + 2 * s };
-    const shoulderB = { x: neck.x - facing * P.shoulderW * 0.35 * s, y: neck.y + 3 * s };
-    const hipF = { x: pelvis.x + facing * P.hipW * 0.3 * s, y: pelvis.y };
-    const hipB = { x: pelvis.x - facing * P.hipW * 0.3 * s, y: pelvis.y };
+    const shoulderF = { x: neck.x + facing * B.shoulderW * 0.35 * s, y: neck.y + 2 * s };
+    const shoulderB = { x: neck.x - facing * B.shoulderW * 0.35 * s, y: neck.y + 3 * s };
+    const hipF = { x: pelvis.x + facing * B.hipW * 0.3 * s, y: pelvis.y };
+    const hipB = { x: pelvis.x - facing * B.hipW * 0.3 * s, y: pelvis.y };
 
-    const armF = limb(shoulderF.x, shoulderF.y, p.armF[0], P.upperArm * s, p.armF[1], P.foreArm * s, facing);
-    const armB = limb(shoulderB.x, shoulderB.y, p.armB[0], P.upperArm * s, p.armB[1], P.foreArm * s, facing);
-    const legF = limb(hipF.x, hipF.y, p.legF[0], P.thigh * s, p.legF[1], P.shin * s, facing);
-    const legB = limb(hipB.x, hipB.y, p.legB[0], P.thigh * s, p.legB[1], P.shin * s, facing);
+    // A guard held close to the body is foreshortened in profile; the sheets
+    // draw it that way, so poses can shorten the bones without changing them.
+    const al = (p.armLen === undefined ? 1 : p.armLen) * s;
+    const ll = (p.legLen === undefined ? 1 : p.legLen) * s;
+    const armF = limb(shoulderF.x, shoulderF.y, p.armF[0], B.upperArm * al, p.armF[1], B.foreArm * al, facing);
+    const armB = limb(shoulderB.x, shoulderB.y, p.armB[0], B.upperArm * al, p.armB[1], B.foreArm * al, facing);
+    const legF = limb(hipF.x, hipF.y, p.legF[0], B.thigh * ll, p.legF[1], B.shin * ll, facing);
+    const legB = limb(hipB.x, hipB.y, p.legB[0], B.thigh * ll, p.legB[1], B.shin * ll, facing);
 
-    const gear = f.gear || {};
-    const build = (f.character && f.character.build) || { limbWidth: 1, headR: 1 };
-    const bodyColor = f.flash > 0 ? '#ffffff' : f.colors.body;
-    const lw = 7 * s * (build.limbWidth || 1);
-    const headR = P.headR * s * (build.headR || 1);
-
-    // Where the soft parts hang from, and the limb angle at each of them.
+    const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
     const joints = {
       head: headC, neck: neck, pelvis: pelvis,
       shoulderF: shoulderF, shoulderB: shoulderB,
       elbowF: armF.joint, elbowB: armB.joint,
       handF: armF.end, handB: armB.end,
+      upperArmF: mid(shoulderF, armF.joint), upperArmB: mid(shoulderB, armB.joint),
+      foreArmF: mid(armF.joint, armF.end), foreArmB: mid(armB.joint, armB.end),
       hipF: hipF, hipB: hipB,
       kneeF: legF.joint, kneeB: legB.joint,
       footF: legF.end, footB: legB.end,
+      thighF: mid(hipF, legF.joint), thighB: mid(hipB, legB.joint),
+      shinF: mid(legF.joint, legF.end), shinB: mid(legB.joint, legB.end),
     };
     const angles = {
       head: p.lean, neck: p.lean, pelvis: 180 + p.lean,
       shoulderF: p.armF[0], shoulderB: p.armB[0],
+      upperArmF: p.armF[0], upperArmB: p.armB[0],
       elbowF: p.armF[0] + p.armF[1], elbowB: p.armB[0] + p.armB[1],
+      foreArmF: p.armF[0] + p.armF[1], foreArmB: p.armB[0] + p.armB[1],
       handF: p.armF[0] + p.armF[1], handB: p.armB[0] + p.armB[1],
       hipF: p.legF[0], hipB: p.legB[0],
+      thighF: p.legF[0], thighB: p.legB[0],
       kneeF: p.legF[0] + p.legF[1], kneeB: p.legB[0] + p.legB[1],
+      shinF: p.legF[0] + p.legF[1], shinB: p.legB[0] + p.legB[1],
       footF: p.legF[0] + p.legF[1], footB: p.legB[0] + p.legB[1],
     };
     const h = Math.min(o.dt === undefined ? 1 / 60 : o.dt, 1 / 30);
 
+    const gear = f.gear || {};
+    const bodyColor = f.flash > 0 ? '#ffffff' : (ch ? ch.colors.body : f.colors.body);
+    const backColor = f.flash > 0 ? '#ffffff' : attachColor(f, 'back');
+
     ctx.save();
 
-    // aura for wardens / rage
-    if (f.colors.aura) {
+    // aura marks a warden; a character's aura colour is for FX only
+    if (f.auraColor) {
       const pulse = 0.5 + 0.5 * Math.sin(f.animT * 4);
       ctx.globalAlpha = 0.16 + pulse * 0.12;
-      ctx.fillStyle = f.colors.aura;
+      ctx.fillStyle = f.auraColor;
       ctx.beginPath(); ctx.ellipse(x, y - 56 * s, 44 * s, 66 * s, 0, 0, 7); ctx.fill();
       ctx.globalAlpha = 1;
     }
     if (f.meter >= 100) {
       const pulse = 0.5 + 0.5 * Math.sin(f.animT * 9);
       ctx.globalAlpha = 0.10 + pulse * 0.14;
-      ctx.fillStyle = '#ffd166';
+      ctx.fillStyle = ch ? ch.colors.aura : '#ffd166';
       ctx.beginPath(); ctx.ellipse(x, y - 56 * s, 40 * s, 64 * s, 0, 0, 7); ctx.fill();
       ctx.globalAlpha = 1;
     }
@@ -3457,10 +4199,9 @@ button { font-family: inherit; cursor: pointer; }
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    attachments(ctx, f, joints, angles, s, facing, h, 'back');
+    if (!o.noAttach) attachments(ctx, f, joints, angles, s, facing, h, 'back', band);
 
-    // back limbs (darker, reads as depth)
-    const backColor = shade(bodyColor, -0.35);
+    // back limbs read as depth
     stroke(ctx, [shoulderB, armB.joint, armB.end], lw * 0.9, backColor);
     stroke(ctx, [hipB, legB.joint, legB.end], lw, backColor);
     if (gear.boots) drawBoot(ctx, legB.end, p.legB[0] + p.legB[1], s, facing, gear.bootTier, backColor);
@@ -3468,15 +4209,15 @@ button { font-family: inherit; cursor: pointer; }
     // torso + armour
     if (gear.armor) {
       ctx.strokeStyle = gear.armorColor || f.colors.accent;
-      ctx.lineWidth = lw * 2.2;
+      ctx.lineWidth = torsoW * 1.9;
       ctx.beginPath(); ctx.moveTo(pelvis.x, pelvis.y); ctx.lineTo(neck.x, neck.y); ctx.stroke();
       ctx.strokeStyle = shade(gear.armorColor || f.colors.accent, -0.3);
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(pelvis.x, pelvis.y); ctx.lineTo(neck.x, neck.y); ctx.stroke();
     }
-    stroke(ctx, [pelvis, neck], lw * 1.15, bodyColor);
+    stroke(ctx, [pelvis, neck], torsoW, bodyColor);
 
-    attachments(ctx, f, joints, angles, s, facing, h, 'front');
+    if (!o.noAttach) attachments(ctx, f, joints, angles, s, facing, h, 'front', band);
 
     // head
     ctx.fillStyle = bodyColor;
@@ -3495,7 +4236,7 @@ button { font-family: inherit; cursor: pointer; }
         ctx.stroke();
       }
     }
-    // eye direction dot — sells which way the fighter faces
+    // eye dot — sells which way the fighter faces
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.beginPath(); ctx.arc(headC.x + facing * headR * 0.42, headC.y - 1 * s, 1.9 * s, 0, 7); ctx.fill();
 
@@ -3506,10 +4247,6 @@ button { font-family: inherit; cursor: pointer; }
 
     // weapon / gauntlet on the front hand
     if (gear.weaponTier) drawWeapon(ctx, armF.end, p.armF[0] + p.armF[1], s, facing, gear.weaponTier, gear.weaponColor || f.colors.accent);
-    if (gear.glovesTier) {
-      ctx.fillStyle = shade(f.colors.accent, 0.1);
-      ctx.beginPath(); ctx.arc(armB.end.x, armB.end.y, 3.2 * s, 0, 7); ctx.fill();
-    }
     if (gear.charm) {
       const cx = pelvis.x - facing * 8 * s, cy = pelvis.y + 2 * s;
       const glow = 0.5 + 0.5 * Math.sin(f.animT * 5);
@@ -3544,11 +4281,12 @@ button { font-family: inherit; cursor: pointer; }
     if (o.debug) {
       const hb = f.hurtbox();
       ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 1; ctx.strokeRect(hb.x, hb.y, hb.w, hb.h);
-      f.activeHits().forEach((h) => {
-        ctx.strokeStyle = '#ff3355'; ctx.strokeRect(h.box.x, h.box.y, h.box.w, h.box.h);
+      f.activeHits().forEach((hit) => {
+        ctx.strokeStyle = '#ff3355'; ctx.strokeRect(hit.box.x, hit.box.y, hit.box.w, hit.box.h);
       });
     }
   }
+
 
   function stroke(ctx, pts, width, color) {
     if (!width || !color) return;
@@ -3627,6 +4365,42 @@ button { font-family: inherit; cursor: pointer; }
     ctx.restore();
   }
 
+  /* The flat screen-print bust from the character sheet. Four or five shapes,
+   * no shading, drawn in the sheet's own 240x260 space and scaled to fit. */
+  function drawPortraitArt(ctx, character, w, hgt) {
+    const art = character.portrait;
+    if (!art) return;
+    const k = Math.min(w / art.w, hgt / art.h);
+    ctx.save();
+    ctx.translate((w - art.w * k) / 2, (hgt - art.h * k) / 2);
+    ctx.scale(k, k);
+    ctx.beginPath();
+    ctx.rect(0, 0, art.w, art.h);
+    ctx.clip();
+    art.shapes.forEach((sh) => {
+      if (sh.t === 'rect') {
+        ctx.fillStyle = sh.fill;
+        ctx.fillRect(sh.x, sh.y, sh.w, sh.h);
+      } else if (sh.t === 'poly') {
+        ctx.fillStyle = sh.fill;
+        ctx.beginPath();
+        sh.pts.forEach((pt, i) => (i ? ctx.lineTo(pt[0], pt[1]) : ctx.moveTo(pt[0], pt[1])));
+        ctx.closePath();
+        ctx.fill();
+      } else if (sh.t === 'circle') {
+        ctx.beginPath();
+        ctx.arc(sh.x, sh.y, sh.r, 0, 7);
+        if (sh.fill) { ctx.fillStyle = sh.fill; ctx.fill(); }
+        if (sh.stroke) { ctx.strokeStyle = sh.stroke; ctx.lineWidth = sh.width || 4; ctx.stroke(); }
+      } else if (sh.t === 'arc') {
+        ctx.beginPath();
+        ctx.arc(sh.x, sh.y, sh.r, U.rad(sh.from), U.rad(sh.to));
+        ctx.strokeStyle = sh.stroke; ctx.lineWidth = sh.width || 6; ctx.stroke();
+      }
+    });
+    ctx.restore();
+  }
+
   /* Character-select cards draw the real fighter, hair physics and all, rather
    * than a separate piece of art that could drift out of sync with the game. */
   function drawPortrait(ctx, character, t, w, hgt, dt) {
@@ -3648,12 +4422,14 @@ button { font-family: inherit; cursor: pointer; }
     ctx.translate(w / 2, hgt * 0.94);
     ctx.scale(scale, scale);
     pf.x = 0; pf.y = 0;
-    drawFighter(ctx, pf, { dt: dt, noShadow: true });
+    drawFighter(ctx, pf, { dt: dt, noShadow: true, band: 'mid' });
     ctx.restore();
   }
   const portraitFighters = {};
 
   R.drawPortrait = drawPortrait;
+  R.drawPortraitArt = drawPortraitArt;
+  R.characterIdle = characterIdle;
   R.POSE = POSE;
   R.P = P;
   R.FX = FX;
@@ -3764,7 +4540,9 @@ button { font-family: inherit; cursor: pointer; }
     ctx.font = '700 15px system-ui, sans-serif';
     ctx.fillStyle = '#fff';
     ctx.fillText(b.name.toUpperCase(), W - 24, 34);
-    bar(ctx, W - 24 - barW, 42, barW, barH, b.hp / b.maxHp, g.bossInfo.warden || g.bossInfo.final ? '#ff4d6d' : '#ff7b54', null, true, g.ghostB);
+    const bossBarColor = g.bossInfo.isRival ? g.bossInfo.colors.body
+      : (g.bossInfo.warden || g.bossInfo.final) ? '#ff4d6d' : '#ff7b54';
+    bar(ctx, W - 24 - barW, 42, barW, barH, b.hp / b.maxHp, bossBarColor, null, true, g.ghostB);
     ctx.font = '600 11px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
     ctx.fillText(g.bossInfo.title + '  •  ' + g.bossInfo.arch, W - 28, 76);
@@ -3937,6 +4715,12 @@ button { font-family: inherit; cursor: pointer; }
       case 'resetKeys': Input.resetBindings(); UI.show('settings'); break;
       case 'wipe': doWipe(); break;
       case 'install': UI.show('install'); break;
+      case 'storyGo': {
+        const go = UI._storyContinue;
+        UI._storyContinue = null;
+        if (go) go();
+        break;
+      }
       default: break;
     }
   }
@@ -4080,11 +4864,12 @@ button { font-family: inherit; cursor: pointer; }
         : '<div class="cs-sig"><span>SIGNATURE</span> <b>None — every combo, no bias</b></div>';
       return `
         <div class="cs-card ${chosen === c.id ? 'on' : ''}" style="--acc:${c.colors.accent}">
-          <canvas class="cs-portrait" data-char="${c.id}" width="240" height="340"></canvas>
+          <canvas class="cs-portrait" data-char="${c.id}" width="240" height="260"></canvas>
           <div class="cs-body">
             <div class="cs-role">${esc(c.role)}</div>
             <div class="cs-name">${esc(c.name)}</div>
             <div class="cs-title">${esc(c.title)}</div>
+            <p class="cs-quote">&ldquo;${esc(c.quote)}&rdquo;</p>
             <p class="cs-tag">${esc(c.tagline)}</p>
             <div class="cs-stats">${bars}</div>
             ${sig}
@@ -4121,15 +4906,9 @@ button { font-family: inherit; cursor: pointer; }
         w: cv.width, h: cv.height,
       };
     });
-    let last = performance.now();
-    const tick = (now) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
-      const t = now / 1000;
-      ctxs.forEach((c) => root.ST.Render.drawPortrait(c.ctx, c.ch, t, c.w, c.h, dt));
-      UI._portraitRAF = requestAnimationFrame(tick);
-    };
-    UI._portraitRAF = requestAnimationFrame(tick);
+    // The commissioned bust, drawn once — it is flat screen-print art, not an
+    // animation, and the live fighter is already moving on the backdrop.
+    ctxs.forEach((c) => root.ST.Render.drawPortraitArt(c.ctx, c.ch, c.w, c.h));
   }
 
   function towerScreen() {
@@ -4475,6 +5254,72 @@ button { font-family: inherit; cursor: pointer; }
       </div>`;
   };
 
+  // -------------------------------------------------------------- story
+  /* A campaign beat. On a rival floor it doubles as the versus screen, which
+   * is what the commissioned portraits were drawn for. */
+  UI.showStory = function (beat, onContinue) {
+    const G = root.ST.Game;
+    UI.setPaused(false);
+    UI.el.classList.remove('hidden');
+    UI.touch.classList.add('hidden');
+    document.getElementById('app').classList.remove('fighting');
+    if (UI._portraitRAF) { cancelAnimationFrame(UI._portraitRAF); UI._portraitRAF = null; }
+    UI.current = 'story';
+    G.screen = 'story';
+
+    const you = Progress.character();
+    const rival = beat.rival ? root.ST.Characters.get(beat.rival) : null;
+    const d = beat.data;
+
+    const versus = rival ? `
+      <div class="vs-strip">
+        <div class="vs-side">
+          <canvas class="vs-art" data-char="${you.id}" width="240" height="260"></canvas>
+          <div class="vs-name" style="--c:${you.colors.body};--t:${you.portrait.nameColor}">
+            <b>${esc(you.name)}</b><span>${esc(you.role)}</span>
+          </div>
+        </div>
+        <div class="vs-mid">VS</div>
+        <div class="vs-side">
+          <canvas class="vs-art" data-char="${rival.id}" width="240" height="260"></canvas>
+          <div class="vs-name" style="--c:${rival.colors.body};--t:${rival.portrait.nameColor}">
+            <b>${esc(rival.name)}</b><span>${esc(rival.role)}</span>
+          </div>
+        </div>
+      </div>` : '';
+
+    UI.el.innerHTML = `
+      <div class="screen story ${beat.kind}">
+        <div class="story-card" style="--acc:${(rival || you).colors.accent}">
+          <div class="story-title">${esc(d.title)}</div>
+          ${versus}
+          ${d.speaker ? `<div class="story-speaker">${esc(d.speaker)}</div>` : ''}
+          <div class="story-lines">
+            ${d.lines.map((l) => `<p>${esc(l)}</p>`).join('')}
+          </div>
+          ${d.sting ? `<div class="story-sting">${esc(d.sting)}</div>` : ''}
+          <button class="big primary" data-ui="storyGo">
+            ${beat.kind === 'after' || beat.kind === 'ending' ? 'CONTINUE' : 'FIGHT'}
+          </button>
+        </div>
+      </div>`;
+
+    UI._storyContinue = onContinue;
+    if (rival) startVersusArt();
+  };
+
+  function startVersusArt() {
+    const canvases = Array.prototype.slice.call(document.querySelectorAll('.vs-art'));
+    const dpr = Math.min(root.devicePixelRatio || 1, 2);
+    canvases.forEach((cv) => {
+      const r = cv.getBoundingClientRect();
+      cv.width = Math.max(1, Math.round(r.width * dpr));
+      cv.height = Math.max(1, Math.round(r.height * dpr));
+      const ch = root.ST.Characters.get(cv.dataset.char);
+      root.ST.Render.drawPortraitArt(cv.getContext('2d'), ch, cv.width, cv.height);
+    });
+  }
+
   // -------------------------------------------------------------- pause
   UI.setPaused = function (paused) {
     let el = document.getElementById('pause');
@@ -4595,8 +5440,40 @@ button { font-family: inherit; cursor: pointer; }
   // ------------------------------------------------------------ fight setup
   Game.startFight = function (floor, opts) {
     const o = opts || {};
+    const Campaign = root.ST.Campaign;
+    const Characters = root.ST.Characters;
+    const charId = Progress.data.character || 'classic';
+
+    // A story beat interrupts the run-up to the fight, never the fight itself.
+    if (!o.skipBeat) {
+      const beat = Campaign.beatBefore(floor, charId, Progress.data);
+      if (beat) {
+        Campaign.markSeen(Progress.data, charId, beat.key);
+        Progress.save();
+        root.ST.UI.showStory(beat, () => Game.startFight(floor, Object.assign({}, o, { skipBeat: true })));
+        return;
+      }
+    }
+
     Game.trainingMode = !!o.training;
-    const info = Floors.get(floor);
+    let info = Floors.get(floor);
+
+    // On a rival floor the Warden is replaced by the fighter you did not pick.
+    const rivalId = Campaign.isRivalFloor(floor) ? Campaign.rivalOf(charId) : null;
+    const rival = rivalId ? Characters.get(rivalId) : null;
+    if (rival) {
+      info = Object.assign({}, info, {
+        name: rival.name,
+        title: rival.title,
+        arch: rival.role,
+        colors: rival.colors,
+        taunt: rival.quote,
+        isRival: true,
+        rivalId: rivalId,
+        scale: rival.build.scale,
+      });
+    }
+    Game.rival = rival;
     const stats = Progress.combat();
 
     const gear = buildGearVisual();
@@ -4615,19 +5492,50 @@ button { font-family: inherit; cursor: pointer; }
       spdMul: info.speed / 178, aspdMul: 1 + Math.min(0.5, floor * 0.006),
       crit: Math.min(0.35, 0.02 + floor * 0.003), critDmg: 1.5,
       rageMul: 1 + floor * 0.01, lifesteal: info.final ? 0.08 : 0,
+      reach: 0,
     };
+    if (rival) {
+      // A rival is the floor's stat block wearing a player character: same
+      // curve, her modifiers, her reach, her signature.
+      const esc = Campaign.rivalScale(floor);
+      bossStats.maxHp = Math.round(bossStats.maxHp * rival.stats.hp * esc);
+      bossStats.atkMul *= rival.stats.atk * esc;
+      bossStats.spdMul *= rival.stats.spd;
+      bossStats.aspdMul *= rival.stats.aspd;
+      bossStats.crit = Math.min(0.5, bossStats.crit + rival.stats.crit);
+      bossStats.rageMul *= rival.stats.rage;
+      bossStats.reach = rival.stats.reach;
+    }
     const boss = new Fighter({
       name: info.name, x: 660, facing: -1,
       colors: info.colors, stats: bossStats, scale: info.scale,
-      gear: bossGearVisual(info),
+      character: rival,
+      gear: rival ? rivalGearVisual(rival, floor) : bossGearVisual(info),
       specials: [],
     });
     boss.y = BOUNDS.ground;
+    boss.auraColor = rival ? rival.colors.aura : info.colors.aura;
+    if (rival) {
+      boss._backColor = tooCloseToStage(rival.colors.back, info.tier.ground)
+        ? (rival.colors.backBright || rival.colors.back)
+        : rival.colors.back;
+    }
+
+    // The sheet flags one contrast risk: a dark-red back limb on a dark-red
+    // stage. Lift it wherever the stage colour sits too close to it.
+    player._backColor = tooCloseToStage(character.colors.back, info.tier.ground)
+      ? (character.colors.backBright || character.colors.back)
+      : character.colors.back;
+    Game.band = Progress.gearBand();
 
     Game.player = player;
     Game.boss = boss;
     Game.bossInfo = info;
-    Game.ai = new AI(boss, info.ai, floor);
+    const aiProfile = rival ? rivalProfile(info.ai, rivalId) : info.ai;
+    Game.ai = new AI(boss, aiProfile, floor);
+    if (rival && rival.signature) {
+      Game.ai.specials = Game.ai.specials.concat([rival.signature]);
+    }
     Game.clock = (info.warden || info.final) ? BOSS_FIGHT_SECONDS : FIGHT_SECONDS;
     Game.timer = Game.clock;
     Game.hitstop = 0;
@@ -4673,12 +5581,30 @@ button { font-family: inherit; cursor: pointer; }
     Audio.startMusic(info.tierIndex);
   };
 
+  /* Straight RGB distance is crude but it is the right crudeness here: the
+   * problem is a back limb sharing a hue family with the stage, not luminance.
+   * Below ~125 catches the Blood Arena and leaves every other stage alone. */
+  function tooCloseToStage(colorA, colorB) {
+    const rgb = (hex) => {
+      const h = hex.replace('#', '');
+      const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    };
+    const a = rgb(colorA), b = rgb(colorB);
+    return Math.sqrt(
+      (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2])
+    ) < 125;
+  }
+
   function buildGearVisual() {
     const eq = Progress.data.equipped;
     const Shop = root.ST.Shop;
     const item = (id) => (id ? Shop.ITEM_BY_ID[id] : null);
     const w = item(eq.weapon), a = item(eq.armor), h = item(eq.head), b = item(eq.boots), gl = item(eq.gloves), ch = item(eq.charm);
-    const tierColor = ['#b8b8b8', '#c9a227', '#9fb4c7', '#d68c45', '#7ee787', '#6ee7ff', '#c77dff', '#ffd166'];
+    // Gear takes the character's own palette. A generic tier ramp put orange
+    // plate on a cyan fighter; tier now reads through size and shape instead.
+    const pal = Progress.character().colors;
+    const tierColor = [pal.trim, pal.trim, pal.accent, pal.accent, pal.accent, pal.aura, pal.aura, pal.aura];
     return {
       weaponTier: w ? w.tier : 0, weaponColor: w ? tierColor[w.tier - 1] : null,
       armor: !!a, armorColor: a ? tierColor[a.tier - 1] : null, armorTier: a ? a.tier : 0,
@@ -4686,6 +5612,40 @@ button { font-family: inherit; cursor: pointer; }
       boots: !!b, bootTier: b ? b.tier : 0,
       glovesTier: gl ? gl.tier : 0,
       charm: !!ch, charmColor: ch ? tierColor[ch.tier - 1] : null,
+    };
+  }
+
+  /* A rival fights like her design says she does, not like a generated boss. */
+  function rivalProfile(base, rivalId) {
+    const p = Object.assign({}, base);
+    if (rivalId === 'raza') {
+      p.aggression = U.clamp(p.aggression * 1.3, 0.3, 0.97);
+      p.spacing = 46;
+      p.jumpiness = p.jumpiness * 0.6;
+      p.comboLen = Math.min(6, p.comboLen + 1);
+      p.blockChance = p.blockChance * 0.85;
+      p.mixup = true;
+    } else if (rivalId === 'vane') {
+      p.aggression = U.clamp(p.aggression * 0.8, 0.2, 0.8);
+      p.spacing = 150;
+      p.blockChance = U.clamp(p.blockChance * 1.25, 0, 0.85);
+      p.whiffPunish = true;
+      p.antiAir = U.clamp(p.antiAir + 0.2, 0, 0.9);
+      p.jumpiness = p.jumpiness * 0.4;
+    }
+    p.specialChance = U.clamp(p.specialChance + 0.2, 0, 0.7);
+    return p;
+  }
+
+  /* Rivals wear their own palette, scaled to how deep the floor is. */
+  function rivalGearVisual(rival, floor) {
+    const t = U.clamp(Math.ceil(floor / 13), 1, 8);
+    return {
+      weaponTier: floor > 20 ? t : 0, weaponColor: rival.colors.accent,
+      armor: false,
+      head: false,
+      boots: floor > 40, bootTier: t,
+      charm: false,
     };
   }
 
@@ -4784,7 +5744,7 @@ button { font-family: inherit; cursor: pointer; }
     if (!Game.phaseTriggered && Game.bossInfo.phases > 1 && b.hp / b.maxHp < 0.5) {
       Game.phaseTriggered = true;
       Game.ai.enterPhase2();
-      b.colors.aura = b.colors.aura || '#ff4d6d';
+      b.auraColor = b.auraColor || '#ff4d6d';
       b.addMeter(50);
       R.FX.ring(b.x, b.y - 55, '#ff4d6d', 10, 160, 0.6);
       R.FX.text(b.x, b.y - 130, 'SECOND WIND', '#ff4d6d', 22);
@@ -4793,6 +5753,9 @@ button { font-family: inherit; cursor: pointer; }
     }
 
     stepFighters(dt, false);
+    signatureFx(p);
+    if (p.partFlash > 0) p.partFlash -= dt;
+    if (b.partFlash > 0) b.partFlash -= dt;
     updateProjectiles(dt);
     resolveHits();
     pushApart();
@@ -4815,6 +5778,40 @@ button { font-family: inherit; cursor: pointer; }
       if (p.dashTimer > 8) R.FX.trail(p.x, p.y, '#6ea8ff', p.scale);
       if (b.dashTimer > 8) R.FX.trail(b.x, b.y, b.colors.body, b.scale);
       if (p.state === 'special') R.FX.trail(p.x, p.y, '#ffd166', p.scale);
+    }
+  }
+
+  /* Beat-timed effects for the character signatures, exactly as the sheets
+   * specify them. Fires once per frame crossing so a slow frame cannot
+   * double-trigger or skip. */
+  function signatureFx(f) {
+    if (f.state !== 'special' || !f.special || !f.special.fx) {
+      f._sigPrev = -1;
+      return;
+    }
+    const sp = f.special;
+    const prev = f._sigPrev === undefined ? -1 : f._sigPrev;
+    const now = f.frame;
+    f._sigPrev = now;
+    const crossed = (n) => prev < n && now >= n;
+    const c = f.character.colors;
+
+    if (sp.fx === 'raza') {
+      if (crossed(10)) {
+        [0.40, 0.25, 0.12].forEach((a, i) => {
+          setTimeout(() => R.FX.afterimage(f, a, 0.26), i * 28);
+        });
+      }
+      if (crossed(58)) {
+        R.FX.ring(f.x + f.facing * 40, f.y - 62 * f.scale, c.aura, 12, 46, 0.14);
+      }
+    } else if (sp.fx === 'vane') {
+      if (crossed(32)) {
+        R.FX.groundWave(f.x + f.facing * 30, Game.BOUNDS.ground, f.facing, c.aura, 120, 0.17);
+        for (let i = 0; i < 5; i++) {
+          R.FX.trail(f.x + f.facing * (20 + i * 14), f.y, c.body, f.scale * 0.6);
+        }
+      }
     }
   }
 
@@ -5012,9 +6009,17 @@ button { font-family: inherit; cursor: pointer; }
     def.chain = (def.chainTimer > 0 ? def.chain : 0) + 1;
     def.chainTimer = 1.1;
 
-    R.FX.spark(cx, cy, heavy ? 14 : 8, res.crit ? '#ffd166' : '#fff3b0', heavy ? 280 : 180);
-    R.FX.ring(cx, cy, res.crit ? '#ffd166' : '#ffffff', 4, heavy ? 60 : 36, 0.2);
-    if (d.shock) R.FX.shock(cx, cy, '#ffd166');
+    const acc = atk.character ? atk.character.colors.accent : '#fff3b0';
+    const trim = atk.character ? atk.character.colors.trim : '#ffffff';
+    if (d.special && atk.character) {
+      // Sparks run along the punch vector rather than bursting in a ball.
+      R.FX.shards(cx, cy, atk.facing > 0 ? -0.35 : Math.PI + 0.35, heavy ? 8 : 6, acc, 0.9, heavy ? 340 : 240);
+    } else {
+      R.FX.spark(cx, cy, heavy ? 14 : 8, res.crit ? '#ffd166' : acc, heavy ? 280 : 180);
+    }
+    R.FX.ring(cx, cy, res.crit ? '#ffd166' : trim, 4, heavy ? 60 : 36, 0.2);
+    if (d.shock) R.FX.shock(cx, cy, acc);
+    atk.partFlash = 0.034;   // two frames — the sheet's forearm-wrap flash
 
     Game.hitstop = Math.max(Game.hitstop, heavy ? 0.085 : 0.045);
     Game.shake = Math.max(Game.shake, heavy ? 12 : 6);
@@ -5091,6 +6096,17 @@ button { font-family: inherit; cursor: pointer; }
     }
     Game.screen = 'result';
     Input.releaseAll();
+
+    const charId = Progress.data.character || 'classic';
+    const after = Game.result === 'win' && !Game.trainingMode
+      ? root.ST.Campaign.beatAfter(info.floor, charId, Progress.data)
+      : null;
+    if (after) {
+      root.ST.Campaign.markSeen(Progress.data, charId, after.key);
+      Progress.save();
+      root.ST.UI.showStory(after, () => root.ST.UI.showResult(payload));
+      return;
+    }
     root.ST.UI.showResult(payload);
   };
 
@@ -5157,7 +6173,10 @@ button { font-family: inherit; cursor: pointer; }
     R.drawBackground(ctx, Game.bossInfo.tier, Game.t, Game.shakeX);
 
     const order = Game.player.y <= Game.boss.y ? [Game.boss, Game.player] : [Game.player, Game.boss];
-    order.forEach((f) => R.drawFighter(ctx, f, { debug: Game.settings.debug, dt: Game.frameDt }));
+    order.forEach((f) => R.drawFighter(ctx, f, {
+      debug: Game.settings.debug, dt: Game.frameDt,
+      band: f.isPlayer ? Game.band : 'mid',
+    }));
 
     Game.projectiles.forEach((pr) => R.drawProjectile(ctx, pr, Game.t));
     R.drawFx(ctx);
@@ -5209,7 +6228,7 @@ button { font-family: inherit; cursor: pointer; }
     demo.character = ch;
     demo.colors = ch.colors;
     demo.scale = ch.build.scale;
-    R.drawFighter(ctx, demo, { dt: Game.frameDt });
+    R.drawFighter(ctx, demo, { dt: Game.frameDt, band: Progress.gearBand() });
     ctx.fillStyle = 'rgba(4,6,12,0.55)';
     ctx.fillRect(0, 0, R.W, R.H);
   }

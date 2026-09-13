@@ -20,10 +20,10 @@ const win = {
     removeItem: (k) => store.delete(k),
   },
 };
-for (const f of ['util.js', 'moves.js', 'characters.js', 'floors.js', 'progress.js']) {
+for (const f of ['util.js', 'moves.js', 'characters.js', 'campaign.js', 'floors.js', 'progress.js']) {
   new Function('window', readFileSync(join(root, 'src', f), 'utf8'))(win);
 }
-const { Progress, Shop, Floors, Characters } = win.ST;
+const { Progress, Shop, Floors, Characters, Campaign } = win.ST;
 
 function bestPurchase() {
   let best = null;
@@ -83,7 +83,21 @@ Progress.data.character = characterId;
 
 for (let floor = 1; floor <= 100; floor++) {
   spend();                                   // shop before the fight
-  const boss = Floors.get(floor);
+  let boss = Floors.get(floor);
+  // On rival floors the Warden is replaced by the other player character, whose
+  // stat modifiers ride on top of the same floor curve.
+  const rivalId = Campaign.isRivalFloor(floor) ? Campaign.rivalOf(characterId) : null;
+  if (rivalId) {
+    const r = Characters.get(rivalId).stats;
+    const esc = Campaign.rivalScale(floor);
+    boss = Object.assign({}, boss, {
+      name: Characters.get(rivalId).name,
+      hp: Math.round(boss.hp * r.hp * esc),
+      atkMul: boss.atkMul * r.atk * esc,
+      power: Math.round(boss.power * (0.4 + 0.3 * r.hp + 0.3 * r.atk)),
+      rival: true,
+    });
+  }
   const mine = Progress.power();
   const ratio = mine / boss.power;
   if (ratio < worst.ratio) worst = { ratio, floor };
@@ -99,18 +113,20 @@ for (let floor = 1; floor <= 100; floor++) {
   const ttkBoss = boss.hp / playerDps;
   const ttkMe = c.maxHp / bossDps;
 
-  rows.push({ floor, mine, boss: boss.power, ratio, coins: Progress.data.coins, lvl: Progress.data.level, ttkBoss, ttkMe });
+  rows.push({ floor, mine, boss: boss.power, ratio, coins: Progress.data.coins, lvl: Progress.data.level, ttkBoss, ttkMe, rival: !!rivalId, name: boss.name });
 
   // Assume an ordinary clear: first time, not perfect, not especially fast.
   const reward = Progress.rewardFor(floor, { perfect: false, fast: false, first: true });
   Progress.recordWin(floor, reward, { perfect: false, bestCombo: 4 });
 }
 
-const fmt = (r) => `floor ${String(r.floor).padStart(3)}  you ${String(r.mine).padStart(6)}  boss ${String(r.boss).padStart(6)}`
+const fmt = (r) => `${r.rival ? 'RIVAL' : '     '} floor ${String(r.floor).padStart(3)}  you ${String(r.mine).padStart(6)}  boss ${String(r.boss).padStart(6)}`
   + `  ratio ${r.ratio.toFixed(2)}  lv${String(r.lvl).padStart(2)}`
   + `  kill ${r.ttkBoss.toFixed(0)}s  survive ${r.ttkMe.toFixed(0)}s  bank ${r.coins}`;
 if (all) rows.forEach((r) => console.log(fmt(r)));
 else [1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 99, 100].forEach((f) => console.log(fmt(rows[f - 1])));
+const rivals = rows.filter((r) => r.rival);
+console.log('rival floors: ' + rivals.map((r) => `${r.floor} vs ${r.name} (ratio ${r.ratio.toFixed(2)}, kill ${r.ttkBoss.toFixed(0)}s)`).join(', '));
 
 const ratios = rows.map((r) => r.ratio);
 const avg = ratios.reduce((a, b) => a + b, 0) / ratios.length;

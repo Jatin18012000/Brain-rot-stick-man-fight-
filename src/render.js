@@ -36,7 +36,7 @@
   // for front + back limbs. Angles: 0 = straight down, 90 = straight forward.
   function basePose() {
     return {
-      lean: 6, hip: 0, headTilt: 0,
+      lean: 6, hip: 0, headTilt: 0, armLen: 1, legLen: 1,
       armF: [18, 26], armB: [-14, 30],
       legF: [10, 10], legB: [-12, 12],
       stretch: 1,
@@ -46,6 +46,9 @@
   function lerpPose(a, b, t) {
     const o = {};
     o.lean = U.lerp(a.lean, b.lean, t);
+    o.bounce = U.lerp(a.bounce || 0, b.bounce || 0, t);
+    o.armLen = U.lerp(a.armLen === undefined ? 1 : a.armLen, b.armLen === undefined ? 1 : b.armLen, t);
+    o.legLen = U.lerp(a.legLen === undefined ? 1 : a.legLen, b.legLen === undefined ? 1 : b.legLen, t);
     o.hip = U.lerp(a.hip, b.hip, t);
     o.headTilt = U.lerp(a.headTilt, b.headTilt, t);
     o.stretch = U.lerp(a.stretch === undefined ? 1 : a.stretch, b.stretch === undefined ? 1 : b.stretch, t);
@@ -96,19 +99,27 @@
   /* Resolve the pose for a fighter this frame. Attacks interpolate through
    * windup -> strike -> recover using real frame data so the visuals and the
    * hitboxes always agree. */
-  function poseFor(f, t) {
-    const p = basePoseFor(f, t);
+  /* A character's idle is their own stance, taken straight from the sheet, not
+   * the engine default with an offset. Everything else — attacks, hurt, walk —
+   * departs from and returns to it. */
+  function characterIdle(f) {
+    const base = basePose();
     const st = f.character && f.character.stance;
-    if (!st || (!st.lean && !st.guard)) return p;
-    // lerpPose(p, p, 0) is a cheap deep clone — the POSE table is shared and
-    // must never be mutated.
-    const o = lerpPose(p, p, 0);
-    o.lean += st.lean || 0;
-    if (st.guard) {
-      o.armF[0] += st.guard;
-      o.armB[0] += st.guard;
+    if (!st) return base;
+    if (st.pose) {
+      base.armF = st.pose.armF.slice();
+      base.armB = st.pose.armB.slice();
+      base.legF = st.pose.legF.slice();
+      base.legB = st.pose.legB.slice();
     }
-    return o;
+    if (st.lean !== undefined) base.lean = st.lean;
+    if (st.armLen !== undefined) base.armLen = st.armLen;
+    if (st.legLen !== undefined) base.legLen = st.legLen;
+    return base;
+  }
+
+  function poseFor(f, t) {
+    return basePoseFor(f, t);
   }
 
   /* Resolve the animation pose before character stance is layered on. */
@@ -118,19 +129,47 @@
 
     switch (anim) {
       case 'idle': {
-        const b = (Math.sin(t * 3.2) + 1) / 2;
-        return lerpPose(POSE.idle, POSE.idle2, b);
+        if (!f.character || !f.character.stance || !f.character.stance.pose) {
+          const b = (Math.sin(t * 3.2) + 1) / 2;
+          return lerpPose(POSE.idle, POSE.idle2, b);
+        }
+        const cfg = f.character.stance.idle || { amp: 1.6, hz: 1.6, hold: 0 };
+        let phase = Math.sin(t * cfg.hz * Math.PI * 2);
+        if (cfg.hold) {
+          // Flatten the peaks so the pose lingers at the top of the breath.
+          const k = 1 + cfg.hold * 4;
+          phase = Math.tanh(phase * k) / Math.tanh(k);
+        }
+        const o = characterIdle(f);
+        o.bounce = (0.5 + 0.5 * phase) * cfg.amp;
+        o.armF[0] += phase * 1.6;
+        o.armB[0] -= phase * 1.6;
+        o.lean += phase * 0.8;
+        return o;
       }
       case 'walk': case 'walkBack': {
-        const s = Math.sin(walkPhase), c = Math.cos(walkPhase);
-        const p = pose({
-          lean: anim === 'walk' ? 10 : 4,
-          armF: [18 - s * 26, 26 + Math.abs(s) * 10],
-          armB: [-14 + s * 26, 30 + Math.abs(s) * 10],
-          legF: [10 + s * 32, 10 + Math.max(0, c) * 26],
-          legB: [-12 - s * 32, 12 + Math.max(0, -c) * 26],
-        });
-        return p;
+        const idle = characterIdle(f);
+        const wcfg = (f.character && f.character.stance && f.character.stance.walk) || { stride: 12 };
+        const k = wcfg.stride / 12;
+        // Longer strides mean a slower cadence, which is most of the read.
+        const ph = t * 8 / k;
+        const sn = Math.sin(ph), cs = Math.cos(ph);
+        if (!f.character || !f.character.stance || !f.character.stance.pose) {
+          return pose({
+            lean: anim === 'walk' ? 10 : 4,
+            armF: [18 - sn * 26, 26 + Math.abs(sn) * 10],
+            armB: [-14 + sn * 26, 30 + Math.abs(sn) * 10],
+            legF: [10 + sn * 32, 10 + Math.max(0, cs) * 26],
+            legB: [-12 - sn * 32, 12 + Math.max(0, -cs) * 26],
+          });
+        }
+        const o = characterIdle(f);
+        o.legF = [idle.legF[0] + sn * 28 * k, idle.legF[1] + Math.max(0, cs) * 22 * k];
+        o.legB = [idle.legB[0] - sn * 28 * k, idle.legB[1] + Math.max(0, -cs) * 22 * k];
+        o.armF = [idle.armF[0] - sn * 14, idle.armF[1]];
+        o.armB = [idle.armB[0] + sn * 14, idle.armB[1]];
+        o.bounce = Math.abs(sn) * 1.2;
+        return o;
       }
       case 'dash': return lerpPose(POSE.idle, POSE.land, 0.5);
       case 'crouch': return POSE.crouch;
@@ -160,7 +199,7 @@
     if (f.state === 'attack' && f.move) {
       const m = f.move;
       const fr = f.frame;
-      const key = attackPoses(m.id);
+      const key = attackPoses(m.id, f);
       if (fr < m.startup) {
         return lerpPose(key.idle, key.wind, U.easeOut(fr / Math.max(1, m.startup)));
       }
@@ -178,20 +217,22 @@
     return POSE.idle;
   }
 
-  function attackPoses(id) {
+  function attackPoses(id, f) {
+    const neutral = f && f.character && f.character.stance && f.character.stance.pose
+      ? characterIdle(f) : POSE.idle;
     switch (id) {
-      case 'jab': return { idle: POSE.idle, wind: POSE.jabWind, hit: POSE.jabHit };
-      case 'cross': return { idle: POSE.idle, wind: POSE.crossWind, hit: POSE.crossHit };
-      case 'kick': return { idle: POSE.idle, wind: POSE.kickWind, hit: POSE.kickHit };
+      case 'jab': return { idle: neutral, wind: POSE.jabWind, hit: POSE.jabHit };
+      case 'cross': return { idle: neutral, wind: POSE.crossWind, hit: POSE.crossHit };
+      case 'kick': return { idle: neutral, wind: POSE.kickWind, hit: POSE.kickHit };
       case 'lowJab': return { idle: POSE.crouch, wind: POSE.crouch, hit: POSE.lowJabHit };
       case 'bodyBlow': return { idle: POSE.crouch, wind: POSE.bodyWind, hit: POSE.bodyHit };
       case 'sweep': return { idle: POSE.crouch, wind: POSE.sweepWind, hit: POSE.sweepHit };
       case 'airPunch': return { idle: POSE.fall, wind: POSE.jabWind, hit: POSE.airPunchP };
       case 'airCross': return { idle: POSE.fall, wind: POSE.crossWind, hit: POSE.airPunchP };
       case 'airKick': return { idle: POSE.fall, wind: POSE.kickWind, hit: POSE.airKickP };
-      case 'lunge': return { idle: POSE.idle, wind: POSE.crossWind, hit: POSE.lungeHit };
-      case 'spinKick': return { idle: POSE.idle, wind: POSE.spinWind, hit: POSE.spinHit };
-      default: return { idle: POSE.idle, wind: POSE.jabWind, hit: POSE.jabHit };
+      case 'lunge': return { idle: neutral, wind: POSE.crossWind, hit: POSE.lungeHit };
+      case 'spinKick': return { idle: neutral, wind: POSE.spinWind, hit: POSE.spinHit };
+      default: return { idle: neutral, wind: POSE.jabWind, hit: POSE.jabHit };
     }
   }
 
@@ -264,6 +305,41 @@
     trail(x, y, color, scale) {
       addFx({ type: 'trail', x, y, life: 0.22, max: 0.22, color: color || '#ffffff', scale: scale || 1 });
     },
+    /* A frozen copy of the fighter, redrawn behind them. Used for Raza's
+     * step-in, where the sheet asks for three ghosts at 40/25/12%. */
+    afterimage(f, alpha, life) {
+      addFx({
+        type: 'ghost', life: life || 0.3, max: life || 0.3, alpha: alpha,
+        snap: {
+          x: f.x, y: f.y, facing: f.facing, scale: f.scale, character: f.character,
+          colors: f.colors, anim: f.anim, animT: f.animT, state: f.state,
+          frame: f.frame, move: f.move, special: f.special, vy: f.vy,
+          isPlayer: f.isPlayer, gear: null, meter: 0, flash: 0, tonicFlash: 0,
+          blocking: false, partFlash: 0, _att: null,
+          hurtbox: () => ({ x: 0, y: 0, w: 0, h: 0 }), activeHits: () => [],
+        },
+      });
+    },
+    /* A wave that runs along the floor away from the fighter. */
+    groundWave(x, y, dir, color, distance, seconds) {
+      addFx({
+        type: 'gwave', x, y, dir, color: color || '#8A5CFF',
+        speed: (distance || 120) / (seconds || 0.17),
+        life: seconds || 0.17, max: seconds || 0.17,
+      });
+    },
+    /* Sparks thrown along one vector rather than in a ball. */
+    shards(x, y, angleRad, count, color, spread, power) {
+      for (let i = 0; i < count; i++) {
+        const a = angleRad + (Math.random() - 0.5) * (spread === undefined ? 0.8 : spread);
+        const sp = (0.6 + Math.random() * 0.8) * (power || 320);
+        addFx({
+          type: 'spark', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          life: 0.22 + Math.random() * 0.18, max: 0.4,
+          color: color || '#FFC93C', size: 2 + Math.random() * 2,
+        });
+      }
+    },
     clear() { fx.length = 0; },
   };
 
@@ -275,6 +351,7 @@
       if (p.vx !== undefined) p.x += p.vx * dt;
       if (p.vy !== undefined) { p.y += p.vy * dt; p.vy += (p.type === 'spark' ? 900 : 200) * dt; }
       if (p.type === 'ring') p.r = U.lerp(p.r, p.r1, 1 - Math.pow(p.life / p.max, 2));
+      if (p.type === 'gwave') p.x += p.dir * p.speed * dt;
     }
   }
 
@@ -304,6 +381,25 @@
         ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.stroke();
         ctx.lineWidth = 2 * a;
         ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.6, 0, 7); ctx.stroke();
+      } else if (p.type === 'ghost') {
+        ctx.globalAlpha = p.alpha * (p.life / p.max);
+        drawFighter(ctx, p.snap, { noShadow: true, noAttach: true, dt: 0 });
+        ctx.globalAlpha = 1;
+      } else if (p.type === 'gwave') {
+        const k = p.life / p.max;
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = k;
+        const hgt = 18 * k + 6;
+        ctx.beginPath();
+        ctx.moveTo(p.x - p.dir * 10, p.y);
+        ctx.quadraticCurveTo(p.x, p.y - hgt, p.x + p.dir * 10, p.y);
+        ctx.stroke();
+        ctx.globalAlpha = k * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(p.x - p.dir * 20, p.y);
+        ctx.quadraticCurveTo(p.x - p.dir * 6, p.y - hgt * 0.6, p.x + p.dir * 4, p.y);
+        ctx.stroke();
       } else if (p.type === 'trail') {
         ctx.strokeStyle = p.color; ctx.lineWidth = 2;
         ctx.globalAlpha = a * 0.35;
@@ -490,26 +586,39 @@
   R.hexA = hexA;
 
   // ---------------------------------------------------------- attachments
-  /* The soft parts — ponytails, sashes, coat tails — are verlet ropes hung off
-   * the skeleton joints the renderer already computes. They are what stop a
+  /* The soft parts — tails, sashes, coat tails, braids — are verlet ropes hung
+   * off the skeleton joints the renderer already computes. They are what stop a
    * character reading as a plain stick figure: the body stops, the hair does
-   * not, and the eye reads weight and speed from the lag. */
+   * not, and the eye reads weight and speed from the lag.
+   *
+   * Rest angles use the character sheet's convention: degrees, 0 = forward,
+   * counter-clockwise, y up. Canvas y is down, hence the negated sine. */
+  function restVec(cfg, facing) {
+    if (cfg.angle !== undefined && typeof cfg.angle === 'number' && cfg.type === 'chain') {
+      const a = U.rad(cfg.angle);
+      return { x: Math.cos(a) * facing, y: -Math.sin(a) };
+    }
+    const r = cfg.rest || [-1, 0];
+    return { x: r[0] * facing, y: r[1] };
+  }
 
-  function chainState(f, cfg, anchor, s, facing) {
+  function partLength(cfg, band) {
+    const mul = cfg.lenByTier ? cfg.lenByTier[root.ST.Characters.BAND_INDEX[band]] : 1;
+    return cfg.length * mul;
+  }
+
+  function chainState(f, cfg, anchor, s, facing, length) {
     if (!f._att) f._att = {};
     let st = f._att[cfg.id];
     const count = (cfg.segments || 4) + 1;
     if (!st || st.pts.length !== count) {
-      const rest = cfg.rest || [-1, 0];
-      const segLen = (cfg.length / (count - 1)) * s;
+      const d = restVec(cfg, facing);
+      const segLen = (length / (count - 1)) * s;
       const pts = [];
       for (let i = 0; i < count; i++) {
-        pts.push({
-          x: anchor.x + rest[0] * facing * segLen * i,
-          y: anchor.y + rest[1] * segLen * i,
-          px: anchor.x + rest[0] * facing * segLen * i,
-          py: anchor.y + rest[1] * segLen * i,
-        });
+        const x = anchor.x + d.x * segLen * i;
+        const y = anchor.y + d.y * segLen * i;
+        pts.push({ x, y, px: x, py: y });
       }
       st = { pts };
       f._att[cfg.id] = st;
@@ -517,9 +626,9 @@
     return st;
   }
 
-  function stepChain(st, anchor, cfg, s, facing, h) {
+  function stepChain(st, anchor, cfg, s, facing, h, length) {
     const pts = st.pts;
-    const segLen = (cfg.length / (pts.length - 1)) * s;
+    const segLen = (length / (pts.length - 1)) * s;
     pts[0].x = anchor.x; pts[0].y = anchor.y;
     pts[0].px = anchor.x; pts[0].py = anchor.y;
 
@@ -534,14 +643,14 @@
       p.y += vy + g * h * h;
     }
 
-    // Pull back toward the rest direction so a ponytail trails rather than hangs.
+    // Pull back toward the rest direction, so a swept tail holds its shape.
     const k = cfg.stiffness || 0;
     if (k > 0) {
-      const rest = cfg.rest || [-1, 0];
+      const d = restVec(cfg, facing);
       for (let i = 1; i < pts.length; i++) {
         const prev = pts[i - 1], p = pts[i];
-        p.x += (prev.x + rest[0] * facing * segLen - p.x) * k * 0.5;
-        p.y += (prev.y + rest[1] * segLen - p.y) * k * 0.5;
+        p.x += (prev.x + d.x * segLen - p.x) * k * 0.5;
+        p.y += (prev.y + d.y * segLen - p.y) * k * 0.5;
       }
     }
 
@@ -573,17 +682,42 @@
     }
   }
 
-  function drawRigid(ctx, cfg, joint, limbAngle, s, facing, color) {
+  function drawRigid(ctx, cfg, joint, limbAngle, s, facing, color, band) {
+    const off = cfg.origin || cfg.offset || [0, 0];
+    const cx = joint.x + off[0] * facing * s;
+    const cy = joint.y - off[1] * s;          // origin y is measured up, like the sheet
+
+    if (cfg.shape === 'ring') {
+      const r = (cfg.radiusByTier ? cfg.radiusByTier[root.ST.Characters.BAND_INDEX[band]] : cfg.radius) * s;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = (cfg.stroke || 1.6) * s;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.stroke();
+      return;
+    }
+
     const a = cfg.angle === 'limb' ? limbAngle : (cfg.angle || 0);
-    const d = dirVec(a, facing);
-    const off = cfg.offset || [0, 0];
+    if (cfg.shape === 'arc') {
+      // A 180-degree cap opening downward, rigid to its joint.
+      ctx.strokeStyle = color;
+      ctx.lineWidth = (cfg.stroke || 4) * s;
+      ctx.lineCap = 'butt';
+      const span = U.rad(cfg.span || 180);
+      const mid = -Math.PI / 2 + U.rad(cfg.angle || 0) * facing;
+      ctx.beginPath();
+      ctx.arc(cx, cy, (cfg.radius || 7) * s, mid - span / 2, mid + span / 2);
+      ctx.stroke();
+      ctx.lineCap = 'round';
+      return;
+    }
+
+    const d = cfg.angle === 'limb' ? dirVec(a, facing) : dirVec(a, facing);
     ctx.save();
-    ctx.translate(joint.x + off[0] * facing * s, joint.y + off[1] * s);
+    ctx.translate(cx, cy);
     ctx.rotate(Math.atan2(d.y, d.x));
     ctx.fillStyle = color;
     const w = (cfg.size ? cfg.size[0] : 10) * s;
     const h = (cfg.size ? cfg.size[1] : 6) * s;
-    if (cfg.shape === 'wedge') {
+    if (cfg.shape === 'wedge' || cfg.shape === 'tri') {
       ctx.beginPath();
       ctx.moveTo(-w * 0.3, -h / 2);
       ctx.lineTo(w * 0.7, 0);
@@ -592,6 +726,14 @@
       ctx.fill();
     } else if (cfg.shape === 'disc') {
       ctx.beginPath(); ctx.arc(0, 0, w / 2, 0, 7); ctx.fill();
+    } else if (cfg.shape === 'capsule') {
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = h;
+      ctx.beginPath();
+      ctx.moveTo(-w / 2 + h / 2, 0);
+      ctx.lineTo(w / 2 - h / 2, 0);
+      ctx.stroke();
     } else {
       ctx.beginPath();
       const r = Math.min(w, h) * 0.35;
@@ -606,33 +748,50 @@
     ctx.restore();
   }
 
-  function attachColor(f, name) {
+  function attachColor(f, name, flashing) {
     const c = (f.character && f.character.colors) || f.colors;
+    if (flashing && c.aura) return c.aura;
     if (name === 'body') return c.body || f.colors.body;
     if (name === 'accent') return c.accent || f.colors.accent;
-    if (name === 'trim') return c.trim || shade(c.accent || f.colors.accent, -0.25);
+    if (name === 'trim') return c.trim || shade(c.accent || f.colors.accent, 0.5);
+    if (name === 'aura') return c.aura || c.accent || f.colors.accent;
+    if (name === 'back') return f._backColor || c.back || shade(c.body, -0.35);
     return name || f.colors.accent;
   }
 
-  /* Step every rope once per frame, then draw the requested layer. */
-  function attachments(ctx, f, joints, angles, s, facing, h, layer) {
-    const list = (f.character && f.character.attachments) || null;
-    if (!list || !list.length) return;
+  /* Step every rope once per frame (on the back pass), then draw one layer. */
+  function attachments(ctx, f, joints, angles, s, facing, h, layer, band) {
+    const ch = f.character;
+    if (!ch) return;
+    const list = root.ST.Characters.partsFor(ch, band);
+    if (!list.length) return;
+    const flashing = f.partFlash > 0;
     list.forEach((cfg) => {
       const joint = joints[cfg.joint];
       if (!joint) return;
-      const front = cfg.front === undefined ? (cfg.type === 'shape') : cfg.front;
+      const isFront = cfg.layer ? cfg.layer === 'front' : cfg.type === 'shape';
       if (cfg.type === 'chain') {
-        const st = chainState(f, cfg, joint, s, facing);
-        if (layer === 'back') stepChain(st, joint, cfg, s, facing, h);
-        if ((layer === 'front') === !!front) drawChain(ctx, st, cfg, s, attachColor(f, cfg.color));
-      } else if ((layer === 'front') === !!front) {
-        drawRigid(ctx, cfg, joint, angles[cfg.joint] || 0, s, facing, attachColor(f, cfg.color));
+        const length = partLength(cfg, band);
+        const origin = cfg.origin
+          ? { x: joint.x + cfg.origin[0] * facing * s, y: joint.y - cfg.origin[1] * s }
+          : joint;
+        const st = chainState(f, cfg, origin, s, facing, length);
+        if (layer === 'back') stepChain(st, origin, cfg, s, facing, h, length);
+        if ((layer === 'front') === isFront) {
+          drawChain(ctx, st, cfg, s, attachColor(f, cfg.color, flashing && cfg.flashOn === 'hit'));
+        }
+      } else if ((layer === 'front') === isFront) {
+        drawRigid(ctx, cfg, joint, angles[cfg.joint] || 0, s, facing,
+          attachColor(f, cfg.color, flashing && cfg.flashOn === 'hit'), band);
       }
     });
   }
 
+
   // -------------------------------------------------------- fighter render
+  /* Every fighter is drawn from the same skeleton, but the bone lengths, stroke
+   * weights and head radius come from the character's build block, so RAZA and
+   * VANE are genuinely different bodies rather than recoloured copies. */
   function drawFighter(ctx, f, opts) {
     const o = opts || {};
     const s = f.scale;
@@ -640,65 +799,90 @@
     const facing = f.facing;
     const x = f.x;
     const y = f.y;
+    const ch = f.character;
+    const B = (ch && ch.build && ch.build.limbs) || P;
+    const band = o.band || 'mid';
 
-    const hipDrop = p.hip * s;
-    const pelvis = { x: x + Math.sin(U.rad(p.lean)) * 4 * facing, y: y - P.pelvis * s + hipDrop };
+    // Joint heights follow the bones: shorter legs means a lower pelvis, or the
+    // feet would not reach the floor.
+    const pelvisH = (B.thigh + B.shin) * 0.963;
+    const neckH = pelvisH + (B.torso || 34);
+    const headH = neckH + 14;
+    const headR = B.headR * s;
+    const lw = (B.limbW || 7) * s;
+    const torsoW = (B.torsoW || lw * 1.15) * s;
+
+    const hipDrop = (p.hip + (p.bounce || 0)) * s;
+    const pelvis = { x: x + Math.sin(U.rad(p.lean)) * 4 * facing, y: y - pelvisH * s + hipDrop };
     const leanV = dirVec(180 + p.lean, facing);
-    const torsoLen = (P.neck - P.pelvis) * s;
+    const torsoLen = (neckH - pelvisH) * s;
     const neck = { x: pelvis.x + leanV.x * torsoLen, y: pelvis.y + leanV.y * torsoLen };
-    const headC = { x: neck.x + leanV.x * (P.headY - P.neck + P.headR * 0.4) * s, y: neck.y + leanV.y * (P.headY - P.neck + P.headR * 0.4) * s };
+    const headC = {
+      x: neck.x + leanV.x * (headH - neckH + B.headR * 0.4) * s,
+      y: neck.y + leanV.y * (headH - neckH + B.headR * 0.4) * s,
+    };
 
-    const shoulderF = { x: neck.x + facing * P.shoulderW * 0.35 * s, y: neck.y + 2 * s };
-    const shoulderB = { x: neck.x - facing * P.shoulderW * 0.35 * s, y: neck.y + 3 * s };
-    const hipF = { x: pelvis.x + facing * P.hipW * 0.3 * s, y: pelvis.y };
-    const hipB = { x: pelvis.x - facing * P.hipW * 0.3 * s, y: pelvis.y };
+    const shoulderF = { x: neck.x + facing * B.shoulderW * 0.35 * s, y: neck.y + 2 * s };
+    const shoulderB = { x: neck.x - facing * B.shoulderW * 0.35 * s, y: neck.y + 3 * s };
+    const hipF = { x: pelvis.x + facing * B.hipW * 0.3 * s, y: pelvis.y };
+    const hipB = { x: pelvis.x - facing * B.hipW * 0.3 * s, y: pelvis.y };
 
-    const armF = limb(shoulderF.x, shoulderF.y, p.armF[0], P.upperArm * s, p.armF[1], P.foreArm * s, facing);
-    const armB = limb(shoulderB.x, shoulderB.y, p.armB[0], P.upperArm * s, p.armB[1], P.foreArm * s, facing);
-    const legF = limb(hipF.x, hipF.y, p.legF[0], P.thigh * s, p.legF[1], P.shin * s, facing);
-    const legB = limb(hipB.x, hipB.y, p.legB[0], P.thigh * s, p.legB[1], P.shin * s, facing);
+    // A guard held close to the body is foreshortened in profile; the sheets
+    // draw it that way, so poses can shorten the bones without changing them.
+    const al = (p.armLen === undefined ? 1 : p.armLen) * s;
+    const ll = (p.legLen === undefined ? 1 : p.legLen) * s;
+    const armF = limb(shoulderF.x, shoulderF.y, p.armF[0], B.upperArm * al, p.armF[1], B.foreArm * al, facing);
+    const armB = limb(shoulderB.x, shoulderB.y, p.armB[0], B.upperArm * al, p.armB[1], B.foreArm * al, facing);
+    const legF = limb(hipF.x, hipF.y, p.legF[0], B.thigh * ll, p.legF[1], B.shin * ll, facing);
+    const legB = limb(hipB.x, hipB.y, p.legB[0], B.thigh * ll, p.legB[1], B.shin * ll, facing);
 
-    const gear = f.gear || {};
-    const build = (f.character && f.character.build) || { limbWidth: 1, headR: 1 };
-    const bodyColor = f.flash > 0 ? '#ffffff' : f.colors.body;
-    const lw = 7 * s * (build.limbWidth || 1);
-    const headR = P.headR * s * (build.headR || 1);
-
-    // Where the soft parts hang from, and the limb angle at each of them.
+    const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
     const joints = {
       head: headC, neck: neck, pelvis: pelvis,
       shoulderF: shoulderF, shoulderB: shoulderB,
       elbowF: armF.joint, elbowB: armB.joint,
       handF: armF.end, handB: armB.end,
+      upperArmF: mid(shoulderF, armF.joint), upperArmB: mid(shoulderB, armB.joint),
+      foreArmF: mid(armF.joint, armF.end), foreArmB: mid(armB.joint, armB.end),
       hipF: hipF, hipB: hipB,
       kneeF: legF.joint, kneeB: legB.joint,
       footF: legF.end, footB: legB.end,
+      thighF: mid(hipF, legF.joint), thighB: mid(hipB, legB.joint),
+      shinF: mid(legF.joint, legF.end), shinB: mid(legB.joint, legB.end),
     };
     const angles = {
       head: p.lean, neck: p.lean, pelvis: 180 + p.lean,
       shoulderF: p.armF[0], shoulderB: p.armB[0],
+      upperArmF: p.armF[0], upperArmB: p.armB[0],
       elbowF: p.armF[0] + p.armF[1], elbowB: p.armB[0] + p.armB[1],
+      foreArmF: p.armF[0] + p.armF[1], foreArmB: p.armB[0] + p.armB[1],
       handF: p.armF[0] + p.armF[1], handB: p.armB[0] + p.armB[1],
       hipF: p.legF[0], hipB: p.legB[0],
+      thighF: p.legF[0], thighB: p.legB[0],
       kneeF: p.legF[0] + p.legF[1], kneeB: p.legB[0] + p.legB[1],
+      shinF: p.legF[0] + p.legF[1], shinB: p.legB[0] + p.legB[1],
       footF: p.legF[0] + p.legF[1], footB: p.legB[0] + p.legB[1],
     };
     const h = Math.min(o.dt === undefined ? 1 / 60 : o.dt, 1 / 30);
 
+    const gear = f.gear || {};
+    const bodyColor = f.flash > 0 ? '#ffffff' : (ch ? ch.colors.body : f.colors.body);
+    const backColor = f.flash > 0 ? '#ffffff' : attachColor(f, 'back');
+
     ctx.save();
 
-    // aura for wardens / rage
-    if (f.colors.aura) {
+    // aura marks a warden; a character's aura colour is for FX only
+    if (f.auraColor) {
       const pulse = 0.5 + 0.5 * Math.sin(f.animT * 4);
       ctx.globalAlpha = 0.16 + pulse * 0.12;
-      ctx.fillStyle = f.colors.aura;
+      ctx.fillStyle = f.auraColor;
       ctx.beginPath(); ctx.ellipse(x, y - 56 * s, 44 * s, 66 * s, 0, 0, 7); ctx.fill();
       ctx.globalAlpha = 1;
     }
     if (f.meter >= 100) {
       const pulse = 0.5 + 0.5 * Math.sin(f.animT * 9);
       ctx.globalAlpha = 0.10 + pulse * 0.14;
-      ctx.fillStyle = '#ffd166';
+      ctx.fillStyle = ch ? ch.colors.aura : '#ffd166';
       ctx.beginPath(); ctx.ellipse(x, y - 56 * s, 40 * s, 64 * s, 0, 0, 7); ctx.fill();
       ctx.globalAlpha = 1;
     }
@@ -720,10 +904,9 @@
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    attachments(ctx, f, joints, angles, s, facing, h, 'back');
+    if (!o.noAttach) attachments(ctx, f, joints, angles, s, facing, h, 'back', band);
 
-    // back limbs (darker, reads as depth)
-    const backColor = shade(bodyColor, -0.35);
+    // back limbs read as depth
     stroke(ctx, [shoulderB, armB.joint, armB.end], lw * 0.9, backColor);
     stroke(ctx, [hipB, legB.joint, legB.end], lw, backColor);
     if (gear.boots) drawBoot(ctx, legB.end, p.legB[0] + p.legB[1], s, facing, gear.bootTier, backColor);
@@ -731,15 +914,15 @@
     // torso + armour
     if (gear.armor) {
       ctx.strokeStyle = gear.armorColor || f.colors.accent;
-      ctx.lineWidth = lw * 2.2;
+      ctx.lineWidth = torsoW * 1.9;
       ctx.beginPath(); ctx.moveTo(pelvis.x, pelvis.y); ctx.lineTo(neck.x, neck.y); ctx.stroke();
       ctx.strokeStyle = shade(gear.armorColor || f.colors.accent, -0.3);
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(pelvis.x, pelvis.y); ctx.lineTo(neck.x, neck.y); ctx.stroke();
     }
-    stroke(ctx, [pelvis, neck], lw * 1.15, bodyColor);
+    stroke(ctx, [pelvis, neck], torsoW, bodyColor);
 
-    attachments(ctx, f, joints, angles, s, facing, h, 'front');
+    if (!o.noAttach) attachments(ctx, f, joints, angles, s, facing, h, 'front', band);
 
     // head
     ctx.fillStyle = bodyColor;
@@ -758,7 +941,7 @@
         ctx.stroke();
       }
     }
-    // eye direction dot — sells which way the fighter faces
+    // eye dot — sells which way the fighter faces
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.beginPath(); ctx.arc(headC.x + facing * headR * 0.42, headC.y - 1 * s, 1.9 * s, 0, 7); ctx.fill();
 
@@ -769,10 +952,6 @@
 
     // weapon / gauntlet on the front hand
     if (gear.weaponTier) drawWeapon(ctx, armF.end, p.armF[0] + p.armF[1], s, facing, gear.weaponTier, gear.weaponColor || f.colors.accent);
-    if (gear.glovesTier) {
-      ctx.fillStyle = shade(f.colors.accent, 0.1);
-      ctx.beginPath(); ctx.arc(armB.end.x, armB.end.y, 3.2 * s, 0, 7); ctx.fill();
-    }
     if (gear.charm) {
       const cx = pelvis.x - facing * 8 * s, cy = pelvis.y + 2 * s;
       const glow = 0.5 + 0.5 * Math.sin(f.animT * 5);
@@ -807,11 +986,12 @@
     if (o.debug) {
       const hb = f.hurtbox();
       ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 1; ctx.strokeRect(hb.x, hb.y, hb.w, hb.h);
-      f.activeHits().forEach((h) => {
-        ctx.strokeStyle = '#ff3355'; ctx.strokeRect(h.box.x, h.box.y, h.box.w, h.box.h);
+      f.activeHits().forEach((hit) => {
+        ctx.strokeStyle = '#ff3355'; ctx.strokeRect(hit.box.x, hit.box.y, hit.box.w, hit.box.h);
       });
     }
   }
+
 
   function stroke(ctx, pts, width, color) {
     if (!width || !color) return;
@@ -890,6 +1070,42 @@
     ctx.restore();
   }
 
+  /* The flat screen-print bust from the character sheet. Four or five shapes,
+   * no shading, drawn in the sheet's own 240x260 space and scaled to fit. */
+  function drawPortraitArt(ctx, character, w, hgt) {
+    const art = character.portrait;
+    if (!art) return;
+    const k = Math.min(w / art.w, hgt / art.h);
+    ctx.save();
+    ctx.translate((w - art.w * k) / 2, (hgt - art.h * k) / 2);
+    ctx.scale(k, k);
+    ctx.beginPath();
+    ctx.rect(0, 0, art.w, art.h);
+    ctx.clip();
+    art.shapes.forEach((sh) => {
+      if (sh.t === 'rect') {
+        ctx.fillStyle = sh.fill;
+        ctx.fillRect(sh.x, sh.y, sh.w, sh.h);
+      } else if (sh.t === 'poly') {
+        ctx.fillStyle = sh.fill;
+        ctx.beginPath();
+        sh.pts.forEach((pt, i) => (i ? ctx.lineTo(pt[0], pt[1]) : ctx.moveTo(pt[0], pt[1])));
+        ctx.closePath();
+        ctx.fill();
+      } else if (sh.t === 'circle') {
+        ctx.beginPath();
+        ctx.arc(sh.x, sh.y, sh.r, 0, 7);
+        if (sh.fill) { ctx.fillStyle = sh.fill; ctx.fill(); }
+        if (sh.stroke) { ctx.strokeStyle = sh.stroke; ctx.lineWidth = sh.width || 4; ctx.stroke(); }
+      } else if (sh.t === 'arc') {
+        ctx.beginPath();
+        ctx.arc(sh.x, sh.y, sh.r, U.rad(sh.from), U.rad(sh.to));
+        ctx.strokeStyle = sh.stroke; ctx.lineWidth = sh.width || 6; ctx.stroke();
+      }
+    });
+    ctx.restore();
+  }
+
   /* Character-select cards draw the real fighter, hair physics and all, rather
    * than a separate piece of art that could drift out of sync with the game. */
   function drawPortrait(ctx, character, t, w, hgt, dt) {
@@ -911,12 +1127,14 @@
     ctx.translate(w / 2, hgt * 0.94);
     ctx.scale(scale, scale);
     pf.x = 0; pf.y = 0;
-    drawFighter(ctx, pf, { dt: dt, noShadow: true });
+    drawFighter(ctx, pf, { dt: dt, noShadow: true, band: 'mid' });
     ctx.restore();
   }
   const portraitFighters = {};
 
   R.drawPortrait = drawPortrait;
+  R.drawPortraitArt = drawPortraitArt;
+  R.characterIdle = characterIdle;
   R.POSE = POSE;
   R.P = P;
   R.FX = FX;
