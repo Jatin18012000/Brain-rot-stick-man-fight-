@@ -54,6 +54,7 @@
       case 'resume': G.togglePause(); break;
       case 'quit': G.quitFight(); break;
       case 'shopTab': UI.shopTab = arg; UI.show('shop'); break;
+      case 'diff': Progress.setDifficulty(arg); UI.show('tower'); break;
       case 'buy': doBuy(arg); break;
       case 'equip': doEquip(arg); break;
       case 'trainStat': doTrainStat(arg); break;
@@ -61,6 +62,16 @@
       case 'toggle': doToggle(arg, btn); break;
       case 'rebind': doRebind(arg, btn); break;
       case 'resetKeys': Input.resetBindings(); UI.show('settings'); break;
+      case 'quality': {
+        const G2 = root.ST.Game;
+        G2.settings.quality = arg === 'auto' ? 'auto' : parseInt(arg, 10);
+        G2.saveSettings();
+        // Choosing Auto re-evaluates from the top; the watcher steps down again
+        // by itself if the device still cannot hold frame rate.
+        G2.applyQuality(arg === 'auto' ? 0 : parseInt(arg, 10), false);
+        UI.show('settings');
+        break;
+      }
       case 'wipe': doWipe(); break;
       case 'install': UI.show('install'); break;
       case 'storyGo': {
@@ -153,6 +164,7 @@
           <span class="stat"><b>${U.comma(d.coins)}</b> <i>coins</i></span>
           <span class="stat"><b>Lv.${d.level}</b> <i>${d.xp}/${xpNeed} xp</i></span>
           <span class="stat"><b>${U.comma(Progress.power())}</b> <i>power</i></span>
+          <span class="stat"><b style="color:${Progress.difficulty().color}">${esc(Progress.difficulty().name)}</b> <i>difficulty</i></span>
         </div>
         <div class="tb-right">
           <button class="chip ${active === 'tower' ? 'on' : ''}" data-ui="tower">TOWER</button>
@@ -264,6 +276,9 @@
     const myPower = Progress.power();
     let rows = '';
     const Campaign = root.ST.Campaign;
+    const Difficulty = root.ST.Difficulty;
+    const diff = Progress.difficulty();
+    const diffPowerMul = Difficulty.powerMul(diff.id);
     const myRival = root.ST.Characters.get(Campaign.rivalOf(d.character || 'classic'));
     for (let f = 100; f >= 1; f--) {
       const info = Floors.get(f);
@@ -271,7 +286,7 @@
       const cleared = f <= d.cleared;
       const current = f === d.highest && !cleared;
       const locked = f > d.highest;
-      const ratio = myPower / info.power;
+      const ratio = myPower / (info.power * diffPowerMul);
       // Calibrated against tools/balance.mjs: a player who shops after every
       // win sits around 1.2-1.35, which should read as a fair fight.
       const verdict = ratio > 1.45 ? ['easy', 'FAVOURED']
@@ -291,6 +306,8 @@
           : esc(info.title) + ' · ' + info.arch + ' · ' + U.comma(info.hp) + ' HP'}</div>
           </div>
           <div class="fl-right">
+            ${!locked && Progress.bestAt(f) >= 0
+        ? `<span class="best" style="--c:${Difficulty.LEVELS[Progress.bestAt(f)].color}">${Difficulty.LEVELS[Progress.bestAt(f)].short}</span>` : ''}
             ${locked ? '<span class="lock">🔒</span>'
         : current ? `<span class="verdict ${verdict[0]}">${verdict[1]}</span><button class="go" data-ui="fight" data-arg="${f}">FIGHT</button>`
           : `<span class="done">✔ CLEARED</span><button class="go ghost" data-ui="train" data-arg="${f}">TRAIN</button>`}
@@ -320,15 +337,32 @@
           <div class="nc-right">
             <div class="power-cmp">
               <div><span>YOU</span><b>${U.comma(myPower)}</b></div>
-              <div><span>BOSS</span><b>${U.comma(nextInfo.power)}</b></div>
+              <div><span>BOSS</span><b>${U.comma(Math.round(nextInfo.power * diffPowerMul))}</b></div>
             </div>
             <button class="big primary" data-ui="fight" data-arg="${nextInfo.floor}">ENTER FLOOR ${nextInfo.floor}</button>
           </div>
         </div>`;
     return `${topBar('tower')}
       <div class="screen tower">
+        ${difficultyPicker(diff)}
         ${card}
         <div class="floor-list">${rows}</div>
+      </div>`;
+  }
+
+  /* Difficulty applies to the next fight you start, from any entry point. */
+  function difficultyPicker(current) {
+    const Difficulty = root.ST.Difficulty;
+    return `
+      <div class="diff-pick">
+        <div class="diff-head">DIFFICULTY <small>applies to the next floor you enter</small></div>
+        <div class="diff-row">
+          ${Difficulty.LEVELS.map((lv) => `
+            <button class="diff ${lv.id === current.id ? 'on' : ''}" style="--c:${lv.color}"
+              data-ui="diff" data-arg="${lv.id}">${esc(lv.name)}
+              <i>×${lv.reward.toFixed(2)}</i></button>`).join('')}
+        </div>
+        <div class="diff-note">${esc(current.blurb)}</div>
       </div>`;
   }
 
@@ -496,7 +530,22 @@
         ${toggle('music', 'Music', 'Synth backing track per tier')}
         ${toggle('haptics', 'Vibration', 'Touch button feedback on phones')}
         ${toggle('showHints', 'Combo hints', 'Show a combo reminder at the start of a fight')}
+        ${toggle('showFps', 'Frame rate readout', 'Shows live fps and the resolution being rendered')}
         ${toggle('debug', 'Show hitboxes', 'Developer view of hit and hurt boxes')}
+
+        <h2>Performance <small>the game is limited by how many pixels it paints, so this is the biggest lever</small></h2>
+        <div class="setting">
+          <div><b>Graphics quality</b><span>Auto steps down on its own if your device cannot keep up</span></div>
+        </div>
+        <div class="diff-row quality-row">
+          ${['auto', 0, 1, 2].map((q) => {
+        const label = q === 'auto' ? 'Auto' : root.ST.Game.QUALITY[q].name;
+        const on = String(s.quality) === String(q);
+        return `<button class="diff ${on ? 'on' : ''}" style="--c:#6ea8ff" data-ui="quality" data-arg="${q}">${label}</button>`;
+      }).join('')}
+        </div>
+        <p class="note">Currently rendering at <b>${root.ST.Game.QUALITY[root.ST.Game.qualityLevel].name}</b>.
+          Lower settings paint fewer pixels and simplify the ambient layer; the fighting is identical at every setting.</p>
 
         <h2>Keyboard &amp; controller <small>works on laptop, and on iPhone/iPad with a paired keyboard or controller</small></h2>
         <div class="binds">${binds}</div>
@@ -567,6 +616,7 @@
         ${r.perfect ? `<div class="rw bonus"><span>PERFECT — no damage taken</span><b>+${U.comma(r.perfect)} ⬤</b></div>` : ''}
         ${r.speed ? `<div class="rw bonus"><span>Fast win</span><b>+${U.comma(r.speed)} ⬤</b></div>` : ''}
         ${r.first ? `<div class="rw bonus"><span>First clear</span><b>+${U.comma(r.first)} ⬤</b></div>` : ''}
+        ${r.diffMul && r.diffMul !== 1 ? `<div class="rw bonus"><span>${esc(p.difficulty.name)} difficulty</span><b>×${r.diffMul.toFixed(2)}</b></div>` : ''}
         ${r.mult > 1 ? `<div class="rw"><span>Charm coin bonus</span><b>×${r.mult.toFixed(2)}</b></div>` : ''}
         <div class="rw total"><span>Total</span><b>+${U.comma(r.coins)} ⬤</b></div>
         <div class="rw"><span>Experience</span><b>+${U.comma(r.xp)} xp</b></div>`;
@@ -588,7 +638,8 @@
       <div class="screen result ${win ? 'win' : 'lose'}">
         <div class="res-card">
           <div class="res-title">${isFinal ? 'TOWER CONQUERED' : win ? (p.training ? 'TRAINING COMPLETE' : 'FLOOR CLEARED') : 'DEFEATED'}</div>
-          <div class="res-sub">${esc(info.name)} · Floor ${p.floor}</div>
+          <div class="res-sub">${esc(info.name)} · Floor ${p.floor}${p.difficulty
+        ? ` · <b style="color:${p.difficulty.color}">${esc(p.difficulty.name.toUpperCase())}</b>` : ''}</div>
           ${isFinal ? '<p class="note">You climbed all one hundred floors. The Ascendant is beaten. Go again on any floor for coins, or wipe the save and try a cleaner run.</p>' : ''}
           <div class="res-stats">
             <span>Best combo <b>${p.bestCombo}</b></span>

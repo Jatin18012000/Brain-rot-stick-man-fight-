@@ -21,7 +21,7 @@
     screen: 'title',
     canvas: null, ctx: null,
     dpr: 1, viewScale: 1, viewX: 0, viewY: 0,
-    settings: { haptics: true, sfx: true, music: true, showHints: true, debug: false, touchScale: 1, lefty: false },
+    settings: { haptics: true, sfx: true, music: true, showHints: true, debug: false, quality: 'auto', showFps: false },
     save: null,
     running: false,
     paused: false,
@@ -38,6 +38,8 @@
     if (s) Object.assign(Game.settings, s);
     Audio.enabled = Game.settings.sfx;
     Audio.setMusic(Game.settings.music);
+    if (Game.settings.quality === undefined) Game.settings.quality = 'auto';
+    Game.applyQuality(Game.settings.quality === 'auto' ? 0 : Game.settings.quality, false);
 
     Input.init(touchLayer);
     Input.onPause = () => {
@@ -56,11 +58,52 @@
 
   Game.saveSettings = function () { U.storage.write('st.settings.v1', Game.settings); };
 
+  /* Quality tiers. The canvas is fill-rate bound on phones, so the biggest
+   * lever by far is how many pixels we paint: dropping the backing store from
+   * 3x to 2x is a ~45% cut on its own. */
+  const QUALITY = [
+    { name: 'High', dpr: 2.0, detail: 1, fx: 1 },
+    { name: 'Medium', dpr: 1.5, detail: 0.5, fx: 0.7 },
+    { name: 'Low', dpr: 1.15, detail: 0, fx: 0.45 },
+  ];
+  Game.qualityLevel = 0;
+  Game.QUALITY = QUALITY;
+
+  Game.qualityCap = function () { return QUALITY[Game.qualityLevel].dpr; };
+
+  Game.applyQuality = function (level, persist) {
+    Game.qualityLevel = U.clamp(level, 0, QUALITY.length - 1);
+    const q = QUALITY[Game.qualityLevel];
+    R.quality = q.detail;
+    R.fxScale = q.fx;
+    if (persist) { Game.settings.quality = Game.qualityLevel; Game.saveSettings(); }
+    Game.resize();
+  };
+
+  /* Watch real frame times and step down if the device cannot keep up. Only
+   * ever steps down — stepping back up mid-fight causes visible oscillation. */
+  const perf = { samples: [], cooldown: 0 };
+  function watchPerformance(dt) {
+    if (Game.settings.quality !== 'auto') return;
+    if (perf.cooldown > 0) { perf.cooldown -= dt; return; }
+    perf.samples.push(dt);
+    if (perf.samples.length < 120) return;
+    const sorted = perf.samples.slice().sort((a, b) => a - b);
+    const median = sorted[sorted.length >> 1];
+    perf.samples.length = 0;
+    // 22ms median is about 45fps — below that the game stops feeling fluid.
+    if (median > 0.022 && Game.qualityLevel < QUALITY.length - 1) {
+      Game.applyQuality(Game.qualityLevel + 1, false);
+      perf.cooldown = 3;
+    }
+  }
+  Game.perfInfo = () => ({ level: QUALITY[Game.qualityLevel].name, fps: Math.round(1 / Math.max(0.001, Game.smoothDt || 0.016)) });
+
   Game.resize = function () {
     const c = Game.canvas;
     if (!c) return;
     const rect = c.parentElement.getBoundingClientRect();
-    const dpr = Math.min(root.devicePixelRatio || 1, 2.5);
+    const dpr = Math.min(root.devicePixelRatio || 1, Game.qualityCap());
     Game.dpr = dpr;
     c.width = Math.max(1, Math.round(rect.width * dpr));
     c.height = Math.max(1, Math.round(rect.height * dpr));
@@ -100,6 +143,9 @@
     }
 
     Game.trainingMode = !!o.training;
+    const Difficulty = root.ST.Difficulty;
+    if (o.difficulty) Progress.setDifficulty(o.difficulty);
+    Game.difficulty = Difficulty.get(Progress.data.difficulty);
     let info = Floors.get(floor);
 
     // On a rival floor the Warden is replaced by the fighter you did not pick.
@@ -150,9 +196,10 @@
       bossStats.rageMul *= rival.stats.rage;
       bossStats.reach = rival.stats.reach;
     }
+    const scaled = Difficulty.scaleBoss(bossStats, Game.difficulty.id);
     const boss = new Fighter({
       name: info.name, x: 660, facing: -1,
-      colors: info.colors, stats: bossStats, scale: info.scale,
+      colors: info.colors, stats: scaled, scale: info.scale,
       character: rival,
       gear: rival ? rivalGearVisual(rival, floor) : bossGearVisual(info),
       specials: [],
@@ -175,7 +222,7 @@
     Game.player = player;
     Game.boss = boss;
     Game.bossInfo = info;
-    const aiProfile = rival ? rivalProfile(info.ai, rivalId) : info.ai;
+    const aiProfile = Difficulty.scaleAI(rival ? rivalProfile(info.ai, rivalId) : info.ai, Game.difficulty.id);
     Game.ai = new AI(boss, aiProfile, floor);
     if (rival && rival.signature) {
       Game.ai.specials = Game.ai.specials.concat([rival.signature]);
@@ -185,7 +232,13 @@
     Game.hitstop = 0;
     Game.shake = 0;
     Game.shakeX = 0; Game.shakeY = 0;
+    Game.shakeVec = { x: 0, y: 0 };
     Game.zoom = 1;
+    Game.zoomBoost = 0;
+    Game.zoomBoostDecay = 4;
+    Game.flashT = 0; Game.flashAlpha = 0; Game.flashColor = '#fff';
+    Game.hitSlow = 0; Game.hitSlowFactor = 1;
+    Game.comboPunch = 0;
     Game.projectiles = [];
     Game.comboCount = 0;
     Game.comboDamage = 0;
@@ -210,7 +263,11 @@
       Game.specialBanner = sp.name.toUpperCase();
       Game.specialBannerT = 1.4;
       Game.specialsUsed++;
-      Game.zoom = 1.12;
+      Game.zoomPunch(sp.ultimate ? 0.12 : 0.07, 0.5);
+      const pal = character.colors;
+      R.FX.ring(player.x, player.y - 55 * player.scale, pal.aura, 10, sp.ultimate ? 130 : 90, 0.3);
+      R.FX.speedLines(player.x, player.y - 55 * player.scale, pal.accent, sp.ultimate ? 14 : 9, 60);
+      if (sp.ultimate) Game.flash(pal.aura, 0.25, 0.2);
       Audio.duck(0.4, 0.8);
     };
 
@@ -312,16 +369,40 @@
     const raw = Math.min(0.05, (now - Game.last) / 1000);
     Game.last = now;
     Game.frameDt = raw;
+    Game.smoothDt = Game.smoothDt ? Game.smoothDt * 0.9 + raw * 0.1 : raw;
+    watchPerformance(raw);
     Input.update();
 
     if (Game.screen === 'fight' && !Game.paused) {
-      const scale = Game.slowmo > 0 ? 0.32 : 1;
+      let scale = 1;
+      if (Game.slowmo > 0) scale = 0.32;
+      else if (Game.hitSlow > 0) scale = Game.hitSlowFactor;
       Game.update(raw * scale);
       if (Game.slowmo > 0) Game.slowmo -= raw;
+      if (Game.hitSlow > 0) Game.hitSlow -= raw;
+      if (Game.flashT > 0) Game.flashT -= raw;
+      if (Game.zoomBoost > 0) Game.zoomBoost = Math.max(0, Game.zoomBoost - raw * Game.zoomBoostDecay * Game.zoomBoost * 4);
+      if (Game.comboPunch > 0) Game.comboPunch = Math.max(0, Game.comboPunch - raw * 4);
     }
     Game.draw();
+    if (Game.settings.showFps) drawFpsMeter();
     requestAnimationFrame(Game.frame);
   };
+
+  let fpsEl = null, fpsAcc = 0;
+  function drawFpsMeter() {
+    if (!fpsEl) {
+      fpsEl = document.getElementById('fps');
+      if (!fpsEl) return;
+      fpsEl.hidden = false;
+    }
+    fpsAcc += Game.frameDt;
+    if (fpsAcc < 0.25) return;
+    fpsAcc = 0;
+    const info = Game.perfInfo();
+    fpsEl.textContent = info.fps + ' fps · ' + info.level + '\n'
+      + Math.round(Game.canvas.width) + '×' + Math.round(Game.canvas.height);
+  }
 
   Game.update = function (dt) {
     Game.t += dt;
@@ -462,8 +543,10 @@
 
   function decayShake(dt) {
     Game.shake = Math.max(0, Game.shake - dt * 42);
-    Game.shakeX = (Math.random() - 0.5) * Game.shake;
-    Game.shakeY = (Math.random() - 0.5) * Game.shake * 0.6;
+    const v = Game.shakeVec || { x: 0, y: 0 };
+    // A biased kick plus a little noise reads as a real impact direction.
+    Game.shakeX = (v.x * 0.7 + (Math.random() - 0.5) * 0.6) * Game.shake;
+    Game.shakeY = (v.y * 0.7 + (Math.random() - 0.5) * 0.4) * Game.shake * 0.7;
   }
 
   function pushApart() {
@@ -483,8 +566,8 @@
   function updateCamera(dt) {
     const p = Game.player, b = Game.boss;
     const d = Math.abs(p.x - b.x);
-    const targetZoom = U.clamp(1.32 - d / 700, 1.0, 1.24);
-    Game.zoom = U.lerp(Game.zoom, targetZoom, dt * 2.4);
+    const targetZoom = U.clamp(1.32 - d / 700, 1.0, 1.24) + (Game.zoomBoost || 0);
+    Game.zoom = U.lerp(Game.zoom, targetZoom, dt * (Game.zoomBoost > 0.01 ? 9 : 2.4));
     const mid = (p.x + b.x) / 2;
     const viewW = R.W / Game.zoom;
     Game.camX = U.clamp(mid, viewW / 2, R.W - viewW / 2);
@@ -643,8 +726,11 @@
       Game.shake = Math.max(Game.shake, 3);
       if (res.result === 'guardbreak') {
         R.FX.text(cx, cy - 40, 'GUARD BREAK', '#ffd166', 22);
+        R.FX.speedLines(cx, cy, '#ffd166', 12, 56);
         Game.hitstop = 0.14;
-        Game.shake = 14;
+        Game.kick(U.sign(def.x - atk.x) || atk.facing, -0.3, 16);
+        Game.flash('#ffd166', 0.3, 0.18);
+        Game.zoomPunch(0.09, 0.3);
       }
       return;
     }
@@ -654,25 +740,41 @@
     def.chain = (def.chainTimer > 0 ? def.chain : 0) + 1;
     def.chainTimer = 1.1;
 
-    const acc = atk.character ? atk.character.colors.accent : '#fff3b0';
-    const trim = atk.character ? atk.character.colors.trim : '#ffffff';
-    if (d.special && atk.character) {
-      // Sparks run along the punch vector rather than bursting in a ball.
-      R.FX.shards(cx, cy, atk.facing > 0 ? -0.35 : Math.PI + 0.35, heavy ? 8 : 6, acc, 0.9, heavy ? 340 : 240);
-    } else {
-      R.FX.spark(cx, cy, heavy ? 14 : 8, res.crit ? '#ffd166' : acc, heavy ? 280 : 180);
-    }
-    R.FX.ring(cx, cy, res.crit ? '#ffd166' : trim, 4, heavy ? 60 : 36, 0.2);
-    if (d.shock) R.FX.shock(cx, cy, acc);
-    atk.partFlash = 0.034;   // two frames — the sheet's forearm-wrap flash
+    const pal = atk.character ? atk.character.colors
+      : { accent: '#fff3b0', trim: '#ffffff', aura: '#ffd166' };
+    const dirX = U.sign(def.x - atk.x) || atk.facing;
 
-    Game.hitstop = Math.max(Game.hitstop, heavy ? 0.085 : 0.045);
-    Game.shake = Math.max(Game.shake, heavy ? 12 : 6);
+    // Is this the blow that ends a combo? That one gets the full treatment.
+    const isFinisher = !!(d.special && atk.special
+      && h.key === atk.special.hits.length - 1 && atk.special.hits.length > 1);
+
+    if (isFinisher) {
+      finisher(atk, def, cx, cy, pal);
+    } else {
+      if (d.special && atk.character) {
+        // Sparks run along the punch vector rather than bursting in a ball.
+        R.FX.shards(cx, cy, atk.facing > 0 ? -0.35 : Math.PI + 0.35, heavy ? 8 : 6, pal.accent, 0.9, heavy ? 340 : 240);
+      } else {
+        R.FX.spark(cx, cy, heavy ? 14 : 8, res.crit ? '#ffd166' : pal.accent, heavy ? 280 : 180);
+      }
+      R.FX.ring(cx, cy, res.crit ? '#ffd166' : pal.trim, 4, heavy ? 60 : 36, 0.2);
+      Game.hitstop = Math.max(Game.hitstop, heavy ? 0.085 : 0.045);
+      Game.kick(dirX, -0.2, heavy ? 13 : 6);
+      if (heavy) Game.zoomPunch(0.045, 0.2);
+      if (res.crit) {
+        R.FX.impactFrame(def, '#ffffff', 0.07);
+        R.FX.speedLines(cx, cy, '#ffd166', 9, 46);
+        Game.flash('#ffd166', 0.16, 0.12);
+      }
+    }
+    if (d.shock) R.FX.shock(cx, cy, pal.accent);
+    atk.partFlash = 0.034;   // two frames — the sheet's forearm-wrap flash
 
     if (atk === Game.player) {
       Game.comboCount = def.chain;
       Game.comboDamage += res.dmg;
       Game.comboTimer = 1.4;
+      Game.comboPunch = 1;
       if (def.chain > Game.bestCombo) Game.bestCombo = def.chain;
       R.FX.text(cx, cy - 30, (res.crit ? 'CRIT ' : '') + Math.round(res.dmg), res.crit ? '#ffd166' : '#ffffff', res.crit ? 24 : 18);
     } else {
@@ -683,6 +785,48 @@
   }
 
   // ------------------------------------------------------------- match end
+  // ------------------------------------------------------------- cinematics
+  /* A short zoom-in on impact. Reads as the camera flinching with the punch. */
+  Game.zoomPunch = function (amount, seconds) {
+    Game.zoomBoost = Math.max(Game.zoomBoost || 0, amount);
+    Game.zoomBoostDecay = 1 / (seconds || 0.25);
+  };
+
+  /* Directional camera kick — a hit from the left throws the frame right. */
+  Game.kick = function (dirX, dirY, amount) {
+    Game.shake = Math.max(Game.shake, amount);
+    Game.shakeVec = { x: dirX, y: dirY };
+  };
+
+  /* Full-screen colour wash. */
+  Game.flash = function (color, alpha, seconds) {
+    Game.flashColor = color;
+    Game.flashAlpha = alpha;
+    Game.flashT = seconds;
+    Game.flashMax = seconds;
+  };
+
+  /* Brief slow motion, independent of the match-end slowdown. */
+  Game.slowTime = function (factor, seconds) {
+    Game.hitSlowFactor = factor;
+    Game.hitSlow = Math.max(Game.hitSlow || 0, seconds);
+  };
+
+  /* Everything at once, for the last hit of a combo. */
+  function finisher(atk, def, cx, cy, colors) {
+    Game.hitstop = Math.max(Game.hitstop, 0.16);
+    Game.zoomPunch(0.16, 0.45);
+    Game.kick(U.sign(def.x - atk.x), -0.4, 20);
+    Game.flash(colors.trim, 0.42, 0.22);
+    Game.slowTime(0.35, 0.26);
+    R.FX.impactFrame(def, '#ffffff', 0.10);
+    R.FX.speedLines(cx, cy, colors.accent, 16, 70);
+    R.FX.ring(cx, cy, colors.trim, 6, 120, 0.3);
+    R.FX.ring(cx, cy, colors.aura, 4, 80, 0.22);
+    R.FX.shards(cx, cy, atk.facing > 0 ? -0.35 : Math.PI + 0.35, 14, colors.accent, 1.1, 460);
+    Audio.duck(0.35, 0.5);
+  }
+
   Game.setAnnounce = function (text, sub, seconds, color) {
     Game.announce = text;
     Game.announceSub = sub || null;
@@ -716,7 +860,7 @@
 
     let payload;
     if (Game.trainingMode) {
-      const reward = Progress.rewardFor(info.floor, { perfect, fast, first: false });
+      const reward = Progress.rewardFor(info.floor, { perfect, fast, first: false, difficulty: Game.difficulty.id });
       const coins = Math.round(reward.coins * 0.4);
       if (Game.result === 'win') {
         Progress.data.coins += coins;
@@ -726,18 +870,18 @@
       }
       payload = { training: true, result: Game.result, coins: Game.result === 'win' ? coins : 0, xp: 0, levels: [], perfect, fast, first: false, floor: info.floor, bestCombo: Game.bestCombo };
     } else if (Game.result === 'win') {
-      const reward = Progress.rewardFor(info.floor, { perfect, fast, first });
+      const reward = Progress.rewardFor(info.floor, { perfect, fast, first, difficulty: Game.difficulty.id });
       const levels = Progress.recordWin(info.floor, reward, { perfect, bestCombo: Game.bestCombo });
-      payload = { result: 'win', reward, levels, perfect, fast, first, floor: info.floor, bestCombo: Game.bestCombo };
+      payload = { result: 'win', reward, levels, perfect, fast, first, floor: info.floor, bestCombo: Game.bestCombo, difficulty: Game.difficulty };
       Audio.play(info.floor % 10 === 0 ? 'floorUp' : 'coin');
       if (levels.length) setTimeout(() => Audio.play('levelUp'), 400);
     } else {
       Progress.recordLoss();
-      const consolation = Math.round((40 + info.floor * 6) * Progress.combat().coinMul);
+      const consolation = Math.round((40 + info.floor * 6) * Progress.combat().coinMul * Game.difficulty.reward);
       Progress.data.coins += consolation;
       Progress.data.stats.coinsEarned += consolation;
       Progress.save();
-      payload = { result: 'lose', coins: consolation, floor: info.floor, bestCombo: Game.bestCombo };
+      payload = { result: 'lose', coins: consolation, floor: info.floor, bestCombo: Game.bestCombo, difficulty: Game.difficulty };
     }
     Game.screen = 'result';
     Input.releaseAll();
@@ -828,12 +972,14 @@
 
     ctx.restore();
 
-    // vignette
-    const vg = ctx.createRadialGradient(R.W / 2, R.H / 2, R.H * 0.35, R.W / 2, R.H / 2, R.H * 0.95);
-    vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, 'rgba(0,0,0,0.55)');
-    ctx.fillStyle = vg;
-    ctx.fillRect(0, 0, R.W, R.H);
+    R.drawVignette(ctx);
+
+    if (Game.flashT > 0) {
+      ctx.globalAlpha = Game.flashAlpha * (Game.flashT / Game.flashMax);
+      ctx.fillStyle = Game.flashColor;
+      ctx.fillRect(0, 0, R.W, R.H);
+      ctx.globalAlpha = 1;
+    }
 
     HUD.draw(ctx, Game);
 

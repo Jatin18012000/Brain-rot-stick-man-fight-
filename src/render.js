@@ -15,7 +15,8 @@
     thigh: 28, shin: 26, upperArm: 24, foreArm: 22, shoulderW: 9, hipW: 7,
   };
 
-  const R = { W, H, GROUND_Y };
+  // 1 = everything, 0.5 = reduced ambience, 0 = bare minimum.
+  const R = { W, H, GROUND_Y, quality: 1, fxScale: 1 };
 
   // ------------------------------------------------------------------ math
   function dirVec(angleDeg, facing) {
@@ -314,6 +315,7 @@
 
   const FX = {
     spark(x, y, count, color, power) {
+      count = Math.max(2, Math.round(count * R.fxScale));
       for (let i = 0; i < count; i++) {
         const a = Math.random() * Math.PI * 2;
         const s = (0.5 + Math.random()) * (power || 200);
@@ -362,6 +364,7 @@
     },
     /* Sparks thrown along one vector rather than in a ball. */
     shards(x, y, angleRad, count, color, spread, power) {
+      count = Math.max(2, Math.round(count * R.fxScale));
       for (let i = 0; i < count; i++) {
         const a = angleRad + (Math.random() - 0.5) * (spread === undefined ? 0.8 : spread);
         const sp = (0.6 + Math.random() * 0.8) * (power || 320);
@@ -369,6 +372,36 @@
           type: 'spark', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
           life: 0.22 + Math.random() * 0.18, max: 0.4,
           color: color || '#FFC93C', size: 2 + Math.random() * 2,
+        });
+      }
+    },
+    /* A frozen white silhouette of whoever just got hit. One frame of pure
+     * impact, the oldest trick in the fighting-game book. */
+    impactFrame(f, color, life) {
+      addFx({
+        type: 'ghost', life: life || 0.09, max: life || 0.09, alpha: 0.85, tint: color || '#ffffff',
+        snap: {
+          x: f.x, y: f.y, facing: f.facing, scale: f.scale * 1.03, character: f.character,
+          colors: f.colors, anim: f.anim, animT: f.animT, state: f.state,
+          frame: f.frame, move: f.move, special: f.special, vy: f.vy,
+          isPlayer: f.isPlayer, gear: null, meter: 0, flash: 0, tonicFlash: 0,
+          blocking: false, partFlash: 0, _att: null,
+          hurtbox: () => ({ x: 0, y: 0, w: 0, h: 0 }), activeHits: () => [],
+        },
+      });
+    },
+    /* Radial lines punched out from a hit. */
+    speedLines(x, y, color, count, radius) {
+      const n = Math.max(3, Math.round((count || 12) * R.fxScale));
+      const base = Math.random() * Math.PI;
+      for (let i = 0; i < n; i++) {
+        const a = base + (i / n) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
+        addFx({
+          type: 'line', x, y, a,
+          r0: (radius || 40) * (0.5 + Math.random() * 0.3),
+          r1: (radius || 40) * (1.2 + Math.random() * 0.8),
+          life: 0.18 + Math.random() * 0.1, max: 0.28,
+          color: color || '#ffffff', w: 1 + Math.random() * 2.5,
         });
       }
     },
@@ -415,7 +448,7 @@
         ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.6, 0, 7); ctx.stroke();
       } else if (p.type === 'ghost') {
         ctx.globalAlpha = p.alpha * (p.life / p.max);
-        drawFighter(ctx, p.snap, { noShadow: true, noAttach: true, dt: 0 });
+        drawFighter(ctx, p.snap, { noShadow: true, noAttach: true, dt: 0, tint: p.tint });
         ctx.globalAlpha = 1;
       } else if (p.type === 'gwave') {
         const k = p.life / p.max;
@@ -432,6 +465,17 @@
         ctx.moveTo(p.x - p.dir * 20, p.y);
         ctx.quadraticCurveTo(p.x - p.dir * 6, p.y - hgt * 0.6, p.x + p.dir * 4, p.y);
         ctx.stroke();
+      } else if (p.type === 'line') {
+        const k = p.life / p.max;
+        const r0 = U.lerp(p.r0, p.r1, 1 - k);
+        const r1 = r0 + (p.r1 - p.r0) * 0.45 * k;
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = p.w * k;
+        ctx.globalAlpha = k;
+        ctx.beginPath();
+        ctx.moveTo(p.x + Math.cos(p.a) * r0, p.y + Math.sin(p.a) * r0);
+        ctx.lineTo(p.x + Math.cos(p.a) * r1, p.y + Math.sin(p.a) * r1);
+        ctx.stroke();
       } else if (p.type === 'trail') {
         ctx.strokeStyle = p.color; ctx.lineWidth = 2;
         ctx.globalAlpha = a * 0.35;
@@ -442,54 +486,118 @@
   }
 
   // ---------------------------------------------------------- backgrounds
+  /* The arena is mostly static: a sky gradient, silhouettes, the ground and a
+   * fan of perspective lines. Repainting all of it every frame is what made
+   * the game fill-rate bound on a phone, so it is baked to an offscreen canvas
+   * once per tier and blitted. Only genuinely moving pieces — flicker, drifting
+   * motes — are drawn live on top. */
   const bgCache = {};
+  const bakedCache = {};
+  const BG_PAD = 120;        // covers camera shake and the zoom-out extreme
 
-  function drawBackground(ctx, tier, t, shakeX) {
-    const key = tier.name;
-    if (!bgCache[key]) bgCache[key] = buildBg(tier);
-    const bg = bgCache[key];
+  function scratch(w, h) {
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w));
+    c.height = Math.max(1, Math.round(h));
+    return c;
+  }
+
+  function bakeBackground(tier, bg) {
+    const cv = scratch(W + BG_PAD * 2, H + BG_PAD * 2);
+    const ctx = cv.getContext('2d');
+    ctx.translate(BG_PAD, BG_PAD);
 
     const g = ctx.createLinearGradient(0, 0, 0, H);
     g.addColorStop(0, tier.sky[0]);
     g.addColorStop(1, tier.sky[1]);
     ctx.fillStyle = g;
-    ctx.fillRect(-100, -100, W + 200, H + 200);
+    ctx.fillRect(-BG_PAD, -BG_PAD, W + BG_PAD * 2, H + BG_PAD * 2);
 
-    // far silhouettes (slow parallax)
-    ctx.save();
-    ctx.translate(shakeX * 0.25, 0);
-    bg.far.forEach((s) => {
-      ctx.fillStyle = s.color;
-      ctx.fillRect(s.x, s.y, s.w, s.h);
+    bg.far.forEach((sil) => {
+      ctx.fillStyle = sil.color;
+      ctx.fillRect(sil.x, sil.y, sil.w, sil.h);
     });
-    ctx.restore();
 
-    drawDeco(ctx, tier, t, bg);
+    drawDeco(ctx, tier, 0, bg, 'static');
 
-    // ground
     ctx.fillStyle = tier.ground;
-    ctx.fillRect(-100, GROUND_Y, W + 200, H - GROUND_Y + 100);
+    ctx.fillRect(-BG_PAD, GROUND_Y, W + BG_PAD * 2, H - GROUND_Y + BG_PAD);
     ctx.strokeStyle = 'rgba(255,255,255,0.10)';
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(-100, GROUND_Y + 0.5); ctx.lineTo(W + 100, GROUND_Y + 0.5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-BG_PAD, GROUND_Y + 0.5); ctx.lineTo(W + BG_PAD, GROUND_Y + 0.5); ctx.stroke();
 
-    // floor perspective lines
     ctx.strokeStyle = 'rgba(255,255,255,0.05)';
     ctx.lineWidth = 1;
+    ctx.beginPath();
     for (let i = 0; i <= 16; i++) {
       const x = (i / 16) * W;
-      ctx.beginPath();
       ctx.moveTo(x, GROUND_Y);
       ctx.lineTo(W / 2 + (x - W / 2) * 2.4, H + 40);
-      ctx.stroke();
     }
+    ctx.stroke();
 
-    // accent glow strip
     const gg = ctx.createLinearGradient(0, GROUND_Y - 40, 0, GROUND_Y);
     gg.addColorStop(0, 'rgba(0,0,0,0)');
     gg.addColorStop(1, hexA(tier.accent, 0.16));
     ctx.fillStyle = gg;
-    ctx.fillRect(-100, GROUND_Y - 40, W + 200, 40);
+    ctx.fillRect(-BG_PAD, GROUND_Y - 40, W + BG_PAD * 2, 40);
+
+    return cv;
+  }
+
+  function drawBackground(ctx, tier, t, shakeX) {
+    const key = tier.name;
+    if (!bgCache[key]) bgCache[key] = buildBg(tier);
+    const bg = bgCache[key];
+    if (!bakedCache[key]) bakedCache[key] = bakeBackground(tier, bg);
+
+    ctx.drawImage(bakedCache[key], -BG_PAD, -BG_PAD);
+
+    if (R.quality > 0) drawDeco(ctx, tier, t, bg, 'anim');
+    if (R.quality > 0) drawMotes(ctx, tier, t, bg);
+  }
+
+  /* Motes in three alpha buckets: keeps the twinkle, but three fill passes
+   * instead of one state change per mote. */
+  function drawMotes(ctx, tier, t, bg) {
+    const count = R.quality > 0.5 ? bg.motes.length : (bg.motes.length >> 1);
+    const buckets = [[], [], []];
+    for (let i = 0; i < count; i++) {
+      const m = bg.motes[i];
+      const tw = 0.5 + 0.5 * Math.sin(t * 2 + m.ph);
+      buckets[tw < 0.34 ? 0 : tw < 0.67 ? 1 : 2].push(m);
+    }
+    ctx.fillStyle = hexA(tier.accent, 1);
+    for (let b = 0; b < 3; b++) {
+      if (!buckets[b].length) continue;
+      ctx.globalAlpha = 0.10 + b * 0.07;
+      ctx.beginPath();
+      for (let i = 0; i < buckets[b].length; i++) {
+        const m = buckets[b][i];
+        const y = (m.y + t * m.sp) % GROUND_Y;
+        const x = m.x + Math.sin(t * 0.7 + m.ph) * 18;
+        ctx.rect(x, y, m.s, m.s);
+      }
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /* A cached full-screen vignette. Evaluating a radial gradient per pixel per
+   * frame was one of the most expensive single operations in the draw. */
+  let vignetteCanvas = null;
+  function drawVignette(ctx) {
+    if (R.quality <= 0) return;
+    if (!vignetteCanvas) {
+      vignetteCanvas = scratch(W, H);
+      const vc = vignetteCanvas.getContext('2d');
+      const vg = vc.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.95);
+      vg.addColorStop(0, 'rgba(0,0,0,0)');
+      vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+      vc.fillStyle = vg;
+      vc.fillRect(0, 0, W, H);
+    }
+    ctx.drawImage(vignetteCanvas, 0, 0);
   }
 
   function buildBg(tier) {
@@ -507,8 +615,14 @@
     return { far, motes, rng };
   }
 
-  function drawDeco(ctx, tier, t, bg) {
+  function drawDeco(ctx, tier, t, bg, phase) {
     const acc = tier.accent;
+    // Tiers whose decoration animates draw a still base into the bake and only
+    // the moving parts live.
+    const ANIMATED = { neon: 1, fire: 1, lab: 1, spire: 1 };
+    const animated = !!ANIMATED[tier.deco];
+    if (phase === 'anim' && !animated) return;
+    if (phase === 'static' && animated) t = 0;
     switch (tier.deco) {
       case 'dojo':
         for (let i = 0; i < 5; i++) {
@@ -599,15 +713,6 @@
       default: break;
     }
 
-    // ambient motes / snow / embers
-    ctx.fillStyle = hexA(acc, 0.35);
-    bg.motes.forEach((m) => {
-      const y = (m.y + t * m.sp) % GROUND_Y;
-      const x = m.x + Math.sin(t * 0.7 + m.ph) * 18;
-      ctx.globalAlpha = 0.10 + 0.18 * (0.5 + 0.5 * Math.sin(t * 2 + m.ph));
-      ctx.fillRect(x, y, m.s, m.s);
-    });
-    ctx.globalAlpha = 1;
   }
 
   function hexA(hex, a) {
@@ -704,12 +809,30 @@
     const taper = cfg.taper === undefined ? 0.35 : cfg.taper;
     ctx.lineCap = 'round';
     ctx.strokeStyle = color;
-    for (let i = 1; i < pts.length; i++) {
-      const t = (i - 1) / (pts.length - 1);
-      ctx.lineWidth = w0 * U.lerp(1, taper, t);
+
+    if (R.quality < 1) {
+      // One pass at the mean width — the taper is barely visible at speed.
+      ctx.lineWidth = w0 * (1 + taper) * 0.5;
       ctx.beginPath();
-      ctx.moveTo(pts[i - 1].x, pts[i - 1].y);
-      ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke();
+      return;
+    }
+
+    // Two passes — a thick root half and a thin tip half — reads the same as
+    // per-segment tapering for a fraction of the operations.
+    const mid = Math.max(1, (pts.length - 1) >> 1);
+    ctx.lineWidth = w0;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i <= mid; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
+    if (mid < pts.length - 1) {
+      ctx.lineWidth = w0 * taper;
+      ctx.beginPath();
+      ctx.moveTo(pts[mid].x, pts[mid].y);
+      for (let i = mid + 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.stroke();
     }
   }
@@ -792,10 +915,13 @@
   }
 
   /* Step every rope once per frame (on the back pass), then draw one layer. */
+  const partsMemo = {};
   function attachments(ctx, f, joints, angles, s, facing, h, layer, band) {
     const ch = f.character;
     if (!ch) return;
-    const list = root.ST.Characters.partsFor(ch, band);
+    const memoKey = ch.id + ':' + band;
+    let list = partsMemo[memoKey];
+    if (!list) list = partsMemo[memoKey] = root.ST.Characters.partsFor(ch, band);
     if (!list.length) return;
     const flashing = f.partFlash > 0;
     list.forEach((cfg) => {
@@ -898,35 +1024,26 @@
     const h = Math.min(o.dt === undefined ? 1 / 60 : o.dt, 1 / 30);
 
     const gear = f.gear || {};
-    const bodyColor = f.flash > 0 ? '#ffffff' : (ch ? ch.colors.body : f.colors.body);
-    const backColor = f.flash > 0 ? '#ffffff' : attachColor(f, 'back');
+    const bodyColor = o.tint || (f.flash > 0 ? '#ffffff' : (ch ? ch.colors.body : f.colors.body));
+    const backColor = o.tint || (f.flash > 0 ? '#ffffff' : attachColor(f, 'back'));
 
     ctx.save();
 
     // aura marks a warden; a character's aura colour is for FX only
     if (f.auraColor) {
       const pulse = 0.5 + 0.5 * Math.sin(f.animT * 4);
-      ctx.globalAlpha = 0.16 + pulse * 0.12;
-      ctx.fillStyle = f.auraColor;
-      ctx.beginPath(); ctx.ellipse(x, y - 56 * s, 44 * s, 66 * s, 0, 0, 7); ctx.fill();
-      ctx.globalAlpha = 1;
+      drawAura(ctx, x, y - 56 * s, 44 * s, 66 * s, f.auraColor, 0.16 + pulse * 0.12);
     }
     if (f.meter >= 100) {
       const pulse = 0.5 + 0.5 * Math.sin(f.animT * 9);
-      ctx.globalAlpha = 0.10 + pulse * 0.14;
-      ctx.fillStyle = ch ? ch.colors.aura : '#ffd166';
-      ctx.beginPath(); ctx.ellipse(x, y - 56 * s, 40 * s, 64 * s, 0, 0, 7); ctx.fill();
-      ctx.globalAlpha = 1;
+      drawAura(ctx, x, y - 56 * s, 40 * s, 64 * s, ch ? ch.colors.aura : '#ffd166', 0.10 + pulse * 0.14);
     }
     if (f.tonicFlash > 0) {
-      ctx.globalAlpha = f.tonicFlash * 0.5;
-      ctx.fillStyle = '#7ee787';
-      ctx.beginPath(); ctx.ellipse(x, y - 56 * s, 42 * s, 66 * s, 0, 0, 7); ctx.fill();
-      ctx.globalAlpha = 1;
+      drawAura(ctx, x, y - 56 * s, 42 * s, 66 * s, '#7ee787', f.tonicFlash * 0.5);
     }
 
     // shadow (skipped for character-select cards, which have no floor)
-    if (!o.noShadow) {
+    if (!o.noShadow && R.quality > 0) {
       ctx.globalAlpha = U.clamp(1 - (GROUND_Y - y) / 260, 0.15, 0.5);
       ctx.fillStyle = '#000';
       ctx.beginPath(); ctx.ellipse(x, GROUND_Y + 2, 26 * s, 6 * s, 0, 0, 7); ctx.fill();
@@ -939,8 +1056,10 @@
     if (!o.noAttach) attachments(ctx, f, joints, angles, s, facing, h, 'back', band);
 
     // back limbs read as depth
-    stroke(ctx, [shoulderB, armB.joint, armB.end], lw * 0.9, backColor);
-    stroke(ctx, [hipB, legB.joint, legB.end], lw, backColor);
+    strokeMany(ctx, [
+      [shoulderB, armB.joint, armB.end],
+      [hipB, legB.joint, legB.end],
+    ], lw * 0.95, backColor);
     if (gear.boots) drawBoot(ctx, legB.end, p.legB[0] + p.legB[1], s, facing, gear.bootTier, backColor);
 
     // torso + armour
@@ -978,9 +1097,11 @@
     ctx.beginPath(); ctx.arc(headC.x + facing * headR * 0.42, headC.y - 1 * s, 1.9 * s, 0, 7); ctx.fill();
 
     // front limbs
-    stroke(ctx, [hipF, legF.joint, legF.end], lw, bodyColor);
+    strokeMany(ctx, [
+      [hipF, legF.joint, legF.end],
+      [shoulderF, armF.joint, armF.end],
+    ], lw * 0.97, bodyColor);
     if (gear.boots) drawBoot(ctx, legF.end, p.legF[0] + p.legF[1], s, facing, gear.bootTier, bodyColor);
-    stroke(ctx, [shoulderF, armF.joint, armF.end], lw * 0.95, bodyColor);
 
     // weapon / gauntlet on the front hand
     if (gear.weaponTier) drawWeapon(ctx, armF.end, p.armF[0] + p.armF[1], s, facing, gear.weaponTier, gear.weaponColor || f.colors.accent);
@@ -1025,6 +1146,31 @@
   }
 
 
+  /* Soft glows are cached per colour: a large translucent radial fill is one of
+   * the most expensive things a canvas can be asked to do per frame. */
+  const auraSprites = {};
+  function auraSprite(color) {
+    if (auraSprites[color]) return auraSprites[color];
+    const size = 128;
+    const cv = scratch(size, size);
+    const c = cv.getContext('2d');
+    const g = c.createRadialGradient(size / 2, size / 2, size * 0.1, size / 2, size / 2, size / 2);
+    g.addColorStop(0, hexA(color, 1));
+    g.addColorStop(0.55, hexA(color, 0.55));
+    g.addColorStop(1, hexA(color, 0));
+    c.fillStyle = g;
+    c.fillRect(0, 0, size, size);
+    auraSprites[color] = cv;
+    return cv;
+  }
+
+  function drawAura(ctx, cx, cy, rx, ry, color, alpha) {
+    if (R.quality <= 0 || alpha <= 0.01) return;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(auraSprite(color), cx - rx, cy - ry, rx * 2, ry * 2);
+    ctx.globalAlpha = 1;
+  }
+
   function stroke(ctx, pts, width, color) {
     if (!width || !color) return;
     ctx.strokeStyle = color;
@@ -1032,6 +1178,22 @@
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
+  }
+
+  /* Several limb chains in one path. Each separate stroke() carries its own
+   * state change and rasterization pass, and the fighters were spending most
+   * of the frame on op count rather than pixels. */
+  function strokeMany(ctx, chains, width, color) {
+    if (!width || !color) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    for (let c = 0; c < chains.length; c++) {
+      const pts = chains[c];
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    }
     ctx.stroke();
   }
 
@@ -1054,13 +1216,16 @@
       ctx.moveTo(9 * s, -5 * s); ctx.lineTo(20 * s, 0); ctx.lineTo(9 * s, 5 * s);
       ctx.closePath(); ctx.fill();
     } else {
-      ctx.shadowColor = color; ctx.shadowBlur = 12;
+      // A shadowBlur here cost more than the rest of the fighter combined; a
+      // drawn outer plate reads the same at this size.
+      ctx.globalAlpha = 0.35;
+      ctx.fillRect(-9 * s, -8 * s, 22 * s, 16 * s);
+      ctx.globalAlpha = 1;
       ctx.fillRect(-6 * s, -5.5 * s, 16 * s, 11 * s);
       ctx.fillStyle = '#fff';
       ctx.beginPath();
       ctx.moveTo(10 * s, -6 * s); ctx.lineTo(26 * s, 0); ctx.lineTo(10 * s, 6 * s);
       ctx.closePath(); ctx.fill();
-      ctx.shadowBlur = 0;
     }
     ctx.restore();
   }
@@ -1174,6 +1339,8 @@
   R.updateFx = updateFx;
   R.drawFx = drawFx;
   R.drawBackground = drawBackground;
+  R.drawVignette = drawVignette;
+  R.scratch = scratch;
   R.drawFighter = drawFighter;
   R.drawProjectile = drawProjectile;
   R.poseFor = poseFor;

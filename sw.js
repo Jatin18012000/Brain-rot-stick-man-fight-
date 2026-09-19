@@ -1,6 +1,6 @@
 /* Stickman Tower service worker — offline-first so the installed app works
  * on a plane, on the underground, or with no signal at all. */
-const CACHE = 'stickman-tower-v3';
+const CACHE = 'stickman-tower-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -12,6 +12,7 @@ const ASSETS = [
   './src/moves.js',
   './src/characters.js',
   './src/campaign.js',
+  './src/difficulty.js',
   './src/floors.js',
   './src/progress.js',
   './src/fighter.js',

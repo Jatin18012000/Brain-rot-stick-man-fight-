@@ -103,7 +103,7 @@
     // ---- centre: floor + timer
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    roundRect(ctx, W / 2 - 62, 16, 124, 56, 10);
+    roundRect(ctx, W / 2 - 62, 16, 124, g.difficulty ? 72 : 56, 10);
     ctx.fill();
     ctx.fillStyle = g.bossInfo.final ? '#ffd76e' : '#fff';
     ctx.font = '900 30px system-ui, sans-serif';
@@ -111,35 +111,67 @@
     ctx.font = '700 11px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.72)';
     ctx.fillText('FLOOR ' + g.bossInfo.floor + ' / 100', W / 2, 64);
+    if (g.difficulty) {
+      ctx.font = '800 10px system-ui, sans-serif';
+      ctx.fillStyle = g.difficulty.color;
+      ctx.fillText(g.difficulty.name.toUpperCase(), W / 2, 80);
+    }
 
-    // ---- combo counter
+    // ---- combo counter: punches outward on every landed hit
     if (g.comboCount >= 2 && g.comboTimer > 0) {
       const a = U.clamp(g.comboTimer / 0.4, 0, 1);
+      const punch = g.comboPunch || 0;
+      const scale = 1 + punch * 0.34;
+      const tilt = punch * 0.05 * (g.comboCount % 2 ? 1 : -1);
+      const cy = 210;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(58, cy - 14);
+      ctx.rotate(tilt);
+      ctx.scale(scale, scale);
+      ctx.textAlign = 'left';
+      const hot = g.comboCount >= 8 ? '#ff5c7c' : g.comboCount >= 5 ? '#ff9f1c' : '#ffd166';
+      ctx.font = '900 46px system-ui, sans-serif';
+      ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.strokeText(g.comboCount, -18, 14);
+      ctx.fillStyle = hot;
+      ctx.fillText(g.comboCount, -18, 14);
+      const numW = ctx.measureText(String(g.comboCount)).width;
+      ctx.font = '800 18px system-ui, sans-serif';
+      ctx.fillStyle = '#fff';
+      ctx.fillText('HITS', -18 + numW + 12, 10);
+      ctx.restore();
       ctx.globalAlpha = a;
       ctx.textAlign = 'left';
-      const cy = 210;
-      ctx.fillStyle = '#ffd166';
-      ctx.font = '900 46px system-ui, sans-serif';
-      ctx.fillText(g.comboCount, 40, cy);
-      ctx.fillStyle = '#fff';
-      ctx.font = '800 18px system-ui, sans-serif';
-      ctx.fillText('HITS', 40 + ctx.measureText(String(g.comboCount)).width + 26, cy - 4);
       ctx.font = '700 13px system-ui, sans-serif';
       ctx.fillStyle = 'rgba(255,255,255,0.8)';
       ctx.fillText(Math.round(g.comboDamage) + ' DMG', 40, cy + 18);
       ctx.globalAlpha = 1;
     }
 
-    // ---- special name banner
+    // ---- special name banner: slams in, then settles
     if (g.specialBanner && g.specialBannerT > 0) {
-      const a = U.clamp(g.specialBannerT / 0.5, 0, 1);
-      ctx.globalAlpha = a;
+      const life = 1 - U.clamp(g.specialBannerT / 1.4, 0, 1);   // 0 at start
+      const slam = U.clamp(life / 0.16, 0, 1);
+      const fade = U.clamp(g.specialBannerT / 0.4, 0, 1);
+      const pal = g.player && g.player.character ? g.player.character.colors : null;
+      ctx.save();
+      ctx.globalAlpha = fade;
+      ctx.translate(W / 2, 150);
+      ctx.scale(U.lerp(2.1, 1, U.easeOut(slam)), U.lerp(2.1, 1, U.easeOut(slam)));
+      ctx.translate(U.lerp(-90, 0, U.easeOut(slam)), 0);
       ctx.textAlign = 'center';
-      ctx.fillStyle = '#ffd166';
       ctx.font = '900 30px system-ui, sans-serif';
-      ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-      ctx.strokeText(g.specialBanner, W / 2, 150);
-      ctx.fillText(g.specialBanner, W / 2, 150);
+      ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+      ctx.strokeText(g.specialBanner, 0, 0);
+      ctx.fillStyle = pal ? pal.accent : '#ffd166';
+      ctx.fillText(g.specialBanner, 0, 0);
+      // a swipe of colour under the name
+      ctx.globalAlpha = fade * 0.5 * (1 - slam * 0.4);
+      ctx.fillStyle = pal ? pal.aura : '#ff9f1c';
+      const w = ctx.measureText(g.specialBanner).width;
+      ctx.fillRect(-w / 2 - 8, 6, w + 16, 3);
+      ctx.restore();
       ctx.globalAlpha = 1;
     }
 

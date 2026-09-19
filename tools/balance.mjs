@@ -20,10 +20,10 @@ const win = {
     removeItem: (k) => store.delete(k),
   },
 };
-for (const f of ['util.js', 'moves.js', 'characters.js', 'campaign.js', 'floors.js', 'progress.js']) {
+for (const f of ['util.js', 'moves.js', 'characters.js', 'difficulty.js', 'campaign.js', 'floors.js', 'progress.js']) {
   new Function('window', readFileSync(join(root, 'src', f), 'utf8'))(win);
 }
-const { Progress, Shop, Floors, Characters, Campaign } = win.ST;
+const { Progress, Shop, Floors, Characters, Campaign, Difficulty } = win.ST;
 
 function bestPurchase() {
   let best = null;
@@ -65,25 +65,37 @@ function spend() {
 
 const all = process.argv.includes('--all');
 const onlyChar = (process.argv.find((a) => a.startsWith('--char=')) || '').split('=')[1];
+const diffArg = (process.argv.find((a) => a.startsWith('--diff=')) || '').split('=')[1];
 const roster = Characters.CHARACTERS.filter((c) => !onlyChar || c.id === onlyChar);
+const levels = diffArg === 'all' ? Difficulty.LEVELS.map((d) => d.id)
+  : [diffArg || 'standard'];
 
 let anyProblem = false;
-for (const character of roster) {
-  console.log(`\n=== ${character.name} (${character.role}) ===`);
-  runClimb(character.id);
+for (const level of levels) {
+  for (const character of roster) {
+    console.log(`\n=== ${character.name} (${character.role}) — ${Difficulty.get(level).name} ===`);
+    runClimb(character.id, level);
+  }
 }
 process.exit(anyProblem ? 1 : 0);
 
-function runClimb(characterId) {
+function runClimb(characterId, level) {
 const rows = [];
 let worst = { ratio: Infinity, floor: 0 };
 Progress.reset();
 Progress.data.coins = 0;
 Progress.data.character = characterId;
+Progress.data.difficulty = level;
+const DIFF = Difficulty.get(level);
 
 for (let floor = 1; floor <= 100; floor++) {
   spend();                                   // shop before the fight
-  let boss = Floors.get(floor);
+  const raw = Floors.get(floor);
+  let boss = Object.assign({}, raw, {
+    hp: Math.round(raw.hp * DIFF.hp),
+    atkMul: raw.atkMul * DIFF.atk,
+    power: Math.round(raw.power * Difficulty.powerMul(level)),
+  });
   // On rival floors the Warden is replaced by the other player character, whose
   // stat modifiers ride on top of the same floor curve.
   const rivalId = Campaign.isRivalFloor(floor) ? Campaign.rivalOf(characterId) : null;

@@ -52,13 +52,18 @@ html, body {
 /* 100vh (not dvh/%) is the one that behaves from a cold start on iOS. */
 #app { position: fixed; inset: 0; height: 100vh; width: 100vw; }
 #stage { position: relative; width: 100%; height: 100%; overflow: hidden; }
-canvas#game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+canvas#game {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  transform: translateZ(0);
+  contain: strict;
+}
 
 .hidden { display: none !important; }
 
 /* ------------------------------------------------------------- touch pad */
 .touch {
   position: absolute; inset: 0; z-index: 20; touch-action: none;
+  transform: translateZ(0);
   --bs: clamp(50px, 11vh, 82px);
 }
 
@@ -76,9 +81,7 @@ canvas#game { position: absolute; inset: 0; width: 100%; height: 100%; display: 
 .pb, .ab {
   -webkit-appearance: none; appearance: none;
   border: 2px solid rgba(255, 255, 255, 0.28);
-  background: rgba(18, 24, 40, 0.5);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(18, 24, 40, 0.62);
   color: #fff;
   border-radius: 50%;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -134,7 +137,7 @@ canvas#game { position: absolute; inset: 0; width: 100%; height: 100%; display: 
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  top: calc(var(--view-y, 0px) + 78px * var(--view-s, 1));
+  top: calc(var(--view-y, 0px) + 96px * var(--view-s, 1));
   width: clamp(34px, 5vh, 42px); height: clamp(30px, 4vh, 34px);
   border-radius: 10px;
   border: 1px solid var(--line);
@@ -183,7 +186,6 @@ button { font-family: inherit; cursor: pointer; }
   background: var(--panel); border: 1px solid var(--line);
   border-radius: 12px; padding: 8px 10px; margin-bottom: 4px;
   position: sticky; top: 0; z-index: 5;
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
 .tb-left, .tb-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .stat { font-size: 12px; color: var(--dim); }
@@ -463,6 +465,40 @@ button { font-family: inherit; cursor: pointer; }
 .cs-portrait { height: auto; aspect-ratio: 240 / 260; }
 .fl-name em.rival { background: var(--gold); color: #1a1200; }
 
+/* fps readout, off by default */
+#fps {
+  position: absolute; z-index: 45; pointer-events: none;
+  left: calc(8px + var(--safe-l)); top: calc(6px + var(--safe-t));
+  font: 700 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #7ee787; background: rgba(0,0,0,.45); padding: 3px 7px; border-radius: 5px;
+  white-space: pre;
+}
+
+/* ------------------------------------------------------------- difficulty */
+.diff-pick {
+  margin: 0 0 12px; padding: 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  position: sticky; top: 52px; z-index: 4;
+}
+.diff-head { font-size: 9px; letter-spacing: .2em; font-weight: 900; color: var(--dim); margin-bottom: 8px; }
+.diff-head small { font-weight: 500; letter-spacing: 0; margin-left: 8px; text-transform: none; }
+.diff-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.diff {
+  padding: 8px 4px; border-radius: 8px; font-size: 10px; font-weight: 900;
+  letter-spacing: .06em; background: rgba(255,255,255,.06);
+  border: 1px solid var(--line); color: var(--dim);
+  display: flex; flex-direction: column; gap: 3px; align-items: center;
+}
+.diff i { font-style: normal; font-size: 9px; opacity: .75; font-weight: 700; }
+.diff.on { background: var(--c); border-color: var(--c); color: #0b0f1a; }
+.diff-note { font-size: 10.5px; color: var(--dim); line-height: 1.45; margin-top: 6px; }
+.diff-note b { white-space: nowrap; }
+.best {
+  font-size: 8px; font-weight: 900; letter-spacing: .1em; padding: 3px 5px;
+  border-radius: 4px; border: 1px solid var(--c); color: var(--c);
+}
+.quality-row { margin-bottom: 8px; }
+
 </style>
 </head>
 <body>
@@ -490,6 +526,7 @@ button { font-family: inherit; cursor: pointer; }
     </div>
 
     <div id="ui" class="ui"></div>
+    <div id="fps" hidden></div>
     <div id="rotate"><div>↻<br>Turn your device sideways<br><small>landscape gives you the full arena</small></div></div>
   </div>
 </div>
@@ -1804,6 +1841,85 @@ button { font-family: inherit; cursor: pointer; }
   root.ST.Characters = { CHARACTERS, BY_ID, get, specialsFor, tierBand, partsFor, BAND_INDEX };
 })(window);
 
+/* ===== src/difficulty.js ===== */
+/* Stickman Tower — difficulty, chosen per floor.
+ *
+ * A level scales what the boss is made of and how sharply it thinks, and pays
+ * out accordingly. It never touches your own stats, your gear or the frame
+ * data: a harder floor is a harder opponent, not a nerfed player.
+ */
+(function (root) {
+  'use strict';
+
+  const LEVELS = [
+    {
+      id: 'casual', name: 'Casual', short: 'CAS',
+      color: '#7ee787',
+      blurb: 'A softer, slower opponent. For learning a floor, or just getting through it.',
+      hp: 0.70, atk: 0.70, reaction: 1.55, aggression: 0.78, special: -0.12, reward: 0.70,
+    },
+    {
+      id: 'standard', name: 'Standard', short: 'STD',
+      color: '#6ea8ff',
+      blurb: 'The tower as designed. Every number balanced against this one.',
+      hp: 1.00, atk: 1.00, reaction: 1.00, aggression: 1.00, special: 0, reward: 1.00,
+    },
+    {
+      id: 'hard', name: 'Hard', short: 'HARD',
+      color: '#ffd166',
+      blurb: 'Deeper health, heavier hits, and a boss that reacts before you finish the string.',
+      hp: 1.35, atk: 1.25, reaction: 0.72, aggression: 1.16, special: 0.10, reward: 1.55,
+    },
+    {
+      id: 'brutal', name: 'Brutal', short: 'BRU',
+      color: '#ff5c7c',
+      blurb: 'It punishes everything. Worth more than double, and you will earn it.',
+      hp: 1.80, atk: 1.55, reaction: 0.52, aggression: 1.32, special: 0.18, reward: 2.30,
+    },
+  ];
+
+  const BY_ID = {};
+  LEVELS.forEach((d, i) => { d.index = i; BY_ID[d.id] = d; });
+
+  const DEFAULT = 'standard';
+
+  function get(id) { return BY_ID[id] || BY_ID[DEFAULT]; }
+
+  /* Apply a level to a floor's generated boss numbers. */
+  function scaleBoss(stats, level) {
+    const d = get(level);
+    return Object.assign({}, stats, {
+      maxHp: Math.max(1, Math.round(stats.maxHp * d.hp)),
+      atkMul: stats.atkMul * d.atk,
+    });
+  }
+
+  /* Apply a level to an AI profile. Reaction is in frames, so a smaller
+   * multiplier means it answers you sooner. */
+  function scaleAI(profile, level) {
+    const d = get(level);
+    const U = root.ST.U;
+    return Object.assign({}, profile, {
+      reaction: Math.max(2, Math.round(profile.reaction * d.reaction)),
+      aggression: U.clamp(profile.aggression * d.aggression, 0.15, 0.97),
+      specialChance: U.clamp(profile.specialChance + d.special, 0, 0.75),
+      blockChance: U.clamp(profile.blockChance * (0.9 + 0.12 * d.aggression), 0, 0.88),
+      punishWindow: Math.max(2, Math.round(profile.punishWindow * d.reaction)),
+    });
+  }
+
+  function rewardMul(level) { return get(level).reward; }
+
+  /* The boss threat rating the tower screen compares against your power. */
+  function powerMul(level) {
+    const d = get(level);
+    return 0.45 + 0.30 * d.hp + 0.25 * d.atk;
+  }
+
+  root.ST = root.ST || {};
+  root.ST.Difficulty = { LEVELS, BY_ID, DEFAULT, get, scaleBoss, scaleAI, rewardMul, powerMul };
+})(window);
+
 /* ===== src/campaign.js ===== */
 /* Stickman Tower — the campaign layer.
  *
@@ -2343,6 +2459,8 @@ button { font-family: inherit; cursor: pointer; }
     return {
       v: 1,
       character: null,        // chosen on first play
+      difficulty: 'standard', // chosen per floor, remembered between fights
+      floorBest: {},          // floor -> hardest difficulty cleared there
       floor: 1,
       highest: 1,
       cleared: 0,
@@ -2370,6 +2488,8 @@ button { font-family: inherit; cursor: pointer; }
         P.data.train = Object.assign(fresh.train, saved.train || {});
         P.data.equipped = Object.assign(fresh.equipped, saved.equipped || {});
         P.data.stats = Object.assign(fresh.stats, saved.stats || {});
+        P.data.floorBest = Object.assign(fresh.floorBest, saved.floorBest || {});
+        if (!P.data.difficulty) P.data.difficulty = 'standard';
       }
       return P.data;
     },
@@ -2460,6 +2580,17 @@ button { font-family: inherit; cursor: pointer; }
 
     character() { return root.ST.Characters.get(P.data.character); },
 
+    difficulty() { return root.ST.Difficulty.get(P.data.difficulty); },
+    setDifficulty(id) {
+      P.data.difficulty = root.ST.Difficulty.get(id).id;
+      P.save();
+    },
+    /* Hardest level this floor has been cleared at, or -1. */
+    bestAt(floor) {
+      const id = P.data.floorBest[floor];
+      return id === undefined ? -1 : root.ST.Difficulty.get(id).index;
+    },
+
     /* Average equipped tier, which decides which gear look a character wears. */
     gearTier() {
       let sum = 0, n = 0;
@@ -2530,18 +2661,21 @@ button { font-family: inherit; cursor: pointer; }
     rewardFor(floor, opts) {
       const o = opts || {};
       const boss = root.ST.Floors.get(floor);
-      const base = Math.round((90 + 26 * floor) * (boss.warden ? 2.4 : 1) * (boss.final ? 4 : 1));
+      const diffMul = root.ST.Difficulty.rewardMul(o.difficulty || P.data.difficulty);
+      const base = Math.round((90 + 26 * floor) * (boss.warden ? 2.4 : 1) * (boss.final ? 4 : 1) * diffMul);
       const perfect = o.perfect ? Math.round(base * 0.5) : 0;
       const speed = o.fast ? Math.round(base * 0.25) : 0;
       const first = o.first ? Math.round(base * 0.35) : 0;
       const mult = P.combat().coinMul;
       const coins = Math.round((base + perfect + speed + first) * mult);
-      const xp = Math.round((40 + 14 * floor) * (boss.warden ? 2 : 1) * (boss.final ? 3 : 1));
-      return { base, perfect, speed, first, coins, xp, mult };
+      const xp = Math.round((40 + 14 * floor) * (boss.warden ? 2 : 1) * (boss.final ? 3 : 1) * diffMul);
+      return { base, perfect, speed, first, coins, xp, mult, diffMul };
     },
 
     recordWin(floor, reward, extra) {
       const d = P.data;
+      const lvl = root.ST.Difficulty.get(d.difficulty);
+      if (P.bestAt(floor) < lvl.index) d.floorBest[floor] = lvl.id;
       d.coins += reward.coins;
       d.stats.coinsEarned += reward.coins;
       d.stats.wins++;
@@ -3329,7 +3463,8 @@ button { font-family: inherit; cursor: pointer; }
     thigh: 28, shin: 26, upperArm: 24, foreArm: 22, shoulderW: 9, hipW: 7,
   };
 
-  const R = { W, H, GROUND_Y };
+  // 1 = everything, 0.5 = reduced ambience, 0 = bare minimum.
+  const R = { W, H, GROUND_Y, quality: 1, fxScale: 1 };
 
   // ------------------------------------------------------------------ math
   function dirVec(angleDeg, facing) {
@@ -3628,6 +3763,7 @@ button { font-family: inherit; cursor: pointer; }
 
   const FX = {
     spark(x, y, count, color, power) {
+      count = Math.max(2, Math.round(count * R.fxScale));
       for (let i = 0; i < count; i++) {
         const a = Math.random() * Math.PI * 2;
         const s = (0.5 + Math.random()) * (power || 200);
@@ -3676,6 +3812,7 @@ button { font-family: inherit; cursor: pointer; }
     },
     /* Sparks thrown along one vector rather than in a ball. */
     shards(x, y, angleRad, count, color, spread, power) {
+      count = Math.max(2, Math.round(count * R.fxScale));
       for (let i = 0; i < count; i++) {
         const a = angleRad + (Math.random() - 0.5) * (spread === undefined ? 0.8 : spread);
         const sp = (0.6 + Math.random() * 0.8) * (power || 320);
@@ -3683,6 +3820,36 @@ button { font-family: inherit; cursor: pointer; }
           type: 'spark', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
           life: 0.22 + Math.random() * 0.18, max: 0.4,
           color: color || '#FFC93C', size: 2 + Math.random() * 2,
+        });
+      }
+    },
+    /* A frozen white silhouette of whoever just got hit. One frame of pure
+     * impact, the oldest trick in the fighting-game book. */
+    impactFrame(f, color, life) {
+      addFx({
+        type: 'ghost', life: life || 0.09, max: life || 0.09, alpha: 0.85, tint: color || '#ffffff',
+        snap: {
+          x: f.x, y: f.y, facing: f.facing, scale: f.scale * 1.03, character: f.character,
+          colors: f.colors, anim: f.anim, animT: f.animT, state: f.state,
+          frame: f.frame, move: f.move, special: f.special, vy: f.vy,
+          isPlayer: f.isPlayer, gear: null, meter: 0, flash: 0, tonicFlash: 0,
+          blocking: false, partFlash: 0, _att: null,
+          hurtbox: () => ({ x: 0, y: 0, w: 0, h: 0 }), activeHits: () => [],
+        },
+      });
+    },
+    /* Radial lines punched out from a hit. */
+    speedLines(x, y, color, count, radius) {
+      const n = Math.max(3, Math.round((count || 12) * R.fxScale));
+      const base = Math.random() * Math.PI;
+      for (let i = 0; i < n; i++) {
+        const a = base + (i / n) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
+        addFx({
+          type: 'line', x, y, a,
+          r0: (radius || 40) * (0.5 + Math.random() * 0.3),
+          r1: (radius || 40) * (1.2 + Math.random() * 0.8),
+          life: 0.18 + Math.random() * 0.1, max: 0.28,
+          color: color || '#ffffff', w: 1 + Math.random() * 2.5,
         });
       }
     },
@@ -3729,7 +3896,7 @@ button { font-family: inherit; cursor: pointer; }
         ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.6, 0, 7); ctx.stroke();
       } else if (p.type === 'ghost') {
         ctx.globalAlpha = p.alpha * (p.life / p.max);
-        drawFighter(ctx, p.snap, { noShadow: true, noAttach: true, dt: 0 });
+        drawFighter(ctx, p.snap, { noShadow: true, noAttach: true, dt: 0, tint: p.tint });
         ctx.globalAlpha = 1;
       } else if (p.type === 'gwave') {
         const k = p.life / p.max;
@@ -3746,6 +3913,17 @@ button { font-family: inherit; cursor: pointer; }
         ctx.moveTo(p.x - p.dir * 20, p.y);
         ctx.quadraticCurveTo(p.x - p.dir * 6, p.y - hgt * 0.6, p.x + p.dir * 4, p.y);
         ctx.stroke();
+      } else if (p.type === 'line') {
+        const k = p.life / p.max;
+        const r0 = U.lerp(p.r0, p.r1, 1 - k);
+        const r1 = r0 + (p.r1 - p.r0) * 0.45 * k;
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = p.w * k;
+        ctx.globalAlpha = k;
+        ctx.beginPath();
+        ctx.moveTo(p.x + Math.cos(p.a) * r0, p.y + Math.sin(p.a) * r0);
+        ctx.lineTo(p.x + Math.cos(p.a) * r1, p.y + Math.sin(p.a) * r1);
+        ctx.stroke();
       } else if (p.type === 'trail') {
         ctx.strokeStyle = p.color; ctx.lineWidth = 2;
         ctx.globalAlpha = a * 0.35;
@@ -3756,54 +3934,118 @@ button { font-family: inherit; cursor: pointer; }
   }
 
   // ---------------------------------------------------------- backgrounds
+  /* The arena is mostly static: a sky gradient, silhouettes, the ground and a
+   * fan of perspective lines. Repainting all of it every frame is what made
+   * the game fill-rate bound on a phone, so it is baked to an offscreen canvas
+   * once per tier and blitted. Only genuinely moving pieces — flicker, drifting
+   * motes — are drawn live on top. */
   const bgCache = {};
+  const bakedCache = {};
+  const BG_PAD = 120;        // covers camera shake and the zoom-out extreme
 
-  function drawBackground(ctx, tier, t, shakeX) {
-    const key = tier.name;
-    if (!bgCache[key]) bgCache[key] = buildBg(tier);
-    const bg = bgCache[key];
+  function scratch(w, h) {
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w));
+    c.height = Math.max(1, Math.round(h));
+    return c;
+  }
+
+  function bakeBackground(tier, bg) {
+    const cv = scratch(W + BG_PAD * 2, H + BG_PAD * 2);
+    const ctx = cv.getContext('2d');
+    ctx.translate(BG_PAD, BG_PAD);
 
     const g = ctx.createLinearGradient(0, 0, 0, H);
     g.addColorStop(0, tier.sky[0]);
     g.addColorStop(1, tier.sky[1]);
     ctx.fillStyle = g;
-    ctx.fillRect(-100, -100, W + 200, H + 200);
+    ctx.fillRect(-BG_PAD, -BG_PAD, W + BG_PAD * 2, H + BG_PAD * 2);
 
-    // far silhouettes (slow parallax)
-    ctx.save();
-    ctx.translate(shakeX * 0.25, 0);
-    bg.far.forEach((s) => {
-      ctx.fillStyle = s.color;
-      ctx.fillRect(s.x, s.y, s.w, s.h);
+    bg.far.forEach((sil) => {
+      ctx.fillStyle = sil.color;
+      ctx.fillRect(sil.x, sil.y, sil.w, sil.h);
     });
-    ctx.restore();
 
-    drawDeco(ctx, tier, t, bg);
+    drawDeco(ctx, tier, 0, bg, 'static');
 
-    // ground
     ctx.fillStyle = tier.ground;
-    ctx.fillRect(-100, GROUND_Y, W + 200, H - GROUND_Y + 100);
+    ctx.fillRect(-BG_PAD, GROUND_Y, W + BG_PAD * 2, H - GROUND_Y + BG_PAD);
     ctx.strokeStyle = 'rgba(255,255,255,0.10)';
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(-100, GROUND_Y + 0.5); ctx.lineTo(W + 100, GROUND_Y + 0.5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-BG_PAD, GROUND_Y + 0.5); ctx.lineTo(W + BG_PAD, GROUND_Y + 0.5); ctx.stroke();
 
-    // floor perspective lines
     ctx.strokeStyle = 'rgba(255,255,255,0.05)';
     ctx.lineWidth = 1;
+    ctx.beginPath();
     for (let i = 0; i <= 16; i++) {
       const x = (i / 16) * W;
-      ctx.beginPath();
       ctx.moveTo(x, GROUND_Y);
       ctx.lineTo(W / 2 + (x - W / 2) * 2.4, H + 40);
-      ctx.stroke();
     }
+    ctx.stroke();
 
-    // accent glow strip
     const gg = ctx.createLinearGradient(0, GROUND_Y - 40, 0, GROUND_Y);
     gg.addColorStop(0, 'rgba(0,0,0,0)');
     gg.addColorStop(1, hexA(tier.accent, 0.16));
     ctx.fillStyle = gg;
-    ctx.fillRect(-100, GROUND_Y - 40, W + 200, 40);
+    ctx.fillRect(-BG_PAD, GROUND_Y - 40, W + BG_PAD * 2, 40);
+
+    return cv;
+  }
+
+  function drawBackground(ctx, tier, t, shakeX) {
+    const key = tier.name;
+    if (!bgCache[key]) bgCache[key] = buildBg(tier);
+    const bg = bgCache[key];
+    if (!bakedCache[key]) bakedCache[key] = bakeBackground(tier, bg);
+
+    ctx.drawImage(bakedCache[key], -BG_PAD, -BG_PAD);
+
+    if (R.quality > 0) drawDeco(ctx, tier, t, bg, 'anim');
+    if (R.quality > 0) drawMotes(ctx, tier, t, bg);
+  }
+
+  /* Motes in three alpha buckets: keeps the twinkle, but three fill passes
+   * instead of one state change per mote. */
+  function drawMotes(ctx, tier, t, bg) {
+    const count = R.quality > 0.5 ? bg.motes.length : (bg.motes.length >> 1);
+    const buckets = [[], [], []];
+    for (let i = 0; i < count; i++) {
+      const m = bg.motes[i];
+      const tw = 0.5 + 0.5 * Math.sin(t * 2 + m.ph);
+      buckets[tw < 0.34 ? 0 : tw < 0.67 ? 1 : 2].push(m);
+    }
+    ctx.fillStyle = hexA(tier.accent, 1);
+    for (let b = 0; b < 3; b++) {
+      if (!buckets[b].length) continue;
+      ctx.globalAlpha = 0.10 + b * 0.07;
+      ctx.beginPath();
+      for (let i = 0; i < buckets[b].length; i++) {
+        const m = buckets[b][i];
+        const y = (m.y + t * m.sp) % GROUND_Y;
+        const x = m.x + Math.sin(t * 0.7 + m.ph) * 18;
+        ctx.rect(x, y, m.s, m.s);
+      }
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /* A cached full-screen vignette. Evaluating a radial gradient per pixel per
+   * frame was one of the most expensive single operations in the draw. */
+  let vignetteCanvas = null;
+  function drawVignette(ctx) {
+    if (R.quality <= 0) return;
+    if (!vignetteCanvas) {
+      vignetteCanvas = scratch(W, H);
+      const vc = vignetteCanvas.getContext('2d');
+      const vg = vc.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.95);
+      vg.addColorStop(0, 'rgba(0,0,0,0)');
+      vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+      vc.fillStyle = vg;
+      vc.fillRect(0, 0, W, H);
+    }
+    ctx.drawImage(vignetteCanvas, 0, 0);
   }
 
   function buildBg(tier) {
@@ -3821,8 +4063,14 @@ button { font-family: inherit; cursor: pointer; }
     return { far, motes, rng };
   }
 
-  function drawDeco(ctx, tier, t, bg) {
+  function drawDeco(ctx, tier, t, bg, phase) {
     const acc = tier.accent;
+    // Tiers whose decoration animates draw a still base into the bake and only
+    // the moving parts live.
+    const ANIMATED = { neon: 1, fire: 1, lab: 1, spire: 1 };
+    const animated = !!ANIMATED[tier.deco];
+    if (phase === 'anim' && !animated) return;
+    if (phase === 'static' && animated) t = 0;
     switch (tier.deco) {
       case 'dojo':
         for (let i = 0; i < 5; i++) {
@@ -3913,15 +4161,6 @@ button { font-family: inherit; cursor: pointer; }
       default: break;
     }
 
-    // ambient motes / snow / embers
-    ctx.fillStyle = hexA(acc, 0.35);
-    bg.motes.forEach((m) => {
-      const y = (m.y + t * m.sp) % GROUND_Y;
-      const x = m.x + Math.sin(t * 0.7 + m.ph) * 18;
-      ctx.globalAlpha = 0.10 + 0.18 * (0.5 + 0.5 * Math.sin(t * 2 + m.ph));
-      ctx.fillRect(x, y, m.s, m.s);
-    });
-    ctx.globalAlpha = 1;
   }
 
   function hexA(hex, a) {
@@ -4018,12 +4257,30 @@ button { font-family: inherit; cursor: pointer; }
     const taper = cfg.taper === undefined ? 0.35 : cfg.taper;
     ctx.lineCap = 'round';
     ctx.strokeStyle = color;
-    for (let i = 1; i < pts.length; i++) {
-      const t = (i - 1) / (pts.length - 1);
-      ctx.lineWidth = w0 * U.lerp(1, taper, t);
+
+    if (R.quality < 1) {
+      // One pass at the mean width — the taper is barely visible at speed.
+      ctx.lineWidth = w0 * (1 + taper) * 0.5;
       ctx.beginPath();
-      ctx.moveTo(pts[i - 1].x, pts[i - 1].y);
-      ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke();
+      return;
+    }
+
+    // Two passes — a thick root half and a thin tip half — reads the same as
+    // per-segment tapering for a fraction of the operations.
+    const mid = Math.max(1, (pts.length - 1) >> 1);
+    ctx.lineWidth = w0;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i <= mid; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
+    if (mid < pts.length - 1) {
+      ctx.lineWidth = w0 * taper;
+      ctx.beginPath();
+      ctx.moveTo(pts[mid].x, pts[mid].y);
+      for (let i = mid + 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.stroke();
     }
   }
@@ -4106,10 +4363,13 @@ button { font-family: inherit; cursor: pointer; }
   }
 
   /* Step every rope once per frame (on the back pass), then draw one layer. */
+  const partsMemo = {};
   function attachments(ctx, f, joints, angles, s, facing, h, layer, band) {
     const ch = f.character;
     if (!ch) return;
-    const list = root.ST.Characters.partsFor(ch, band);
+    const memoKey = ch.id + ':' + band;
+    let list = partsMemo[memoKey];
+    if (!list) list = partsMemo[memoKey] = root.ST.Characters.partsFor(ch, band);
     if (!list.length) return;
     const flashing = f.partFlash > 0;
     list.forEach((cfg) => {
@@ -4212,35 +4472,26 @@ button { font-family: inherit; cursor: pointer; }
     const h = Math.min(o.dt === undefined ? 1 / 60 : o.dt, 1 / 30);
 
     const gear = f.gear || {};
-    const bodyColor = f.flash > 0 ? '#ffffff' : (ch ? ch.colors.body : f.colors.body);
-    const backColor = f.flash > 0 ? '#ffffff' : attachColor(f, 'back');
+    const bodyColor = o.tint || (f.flash > 0 ? '#ffffff' : (ch ? ch.colors.body : f.colors.body));
+    const backColor = o.tint || (f.flash > 0 ? '#ffffff' : attachColor(f, 'back'));
 
     ctx.save();
 
     // aura marks a warden; a character's aura colour is for FX only
     if (f.auraColor) {
       const pulse = 0.5 + 0.5 * Math.sin(f.animT * 4);
-      ctx.globalAlpha = 0.16 + pulse * 0.12;
-      ctx.fillStyle = f.auraColor;
-      ctx.beginPath(); ctx.ellipse(x, y - 56 * s, 44 * s, 66 * s, 0, 0, 7); ctx.fill();
-      ctx.globalAlpha = 1;
+      drawAura(ctx, x, y - 56 * s, 44 * s, 66 * s, f.auraColor, 0.16 + pulse * 0.12);
     }
     if (f.meter >= 100) {
       const pulse = 0.5 + 0.5 * Math.sin(f.animT * 9);
-      ctx.globalAlpha = 0.10 + pulse * 0.14;
-      ctx.fillStyle = ch ? ch.colors.aura : '#ffd166';
-      ctx.beginPath(); ctx.ellipse(x, y - 56 * s, 40 * s, 64 * s, 0, 0, 7); ctx.fill();
-      ctx.globalAlpha = 1;
+      drawAura(ctx, x, y - 56 * s, 40 * s, 64 * s, ch ? ch.colors.aura : '#ffd166', 0.10 + pulse * 0.14);
     }
     if (f.tonicFlash > 0) {
-      ctx.globalAlpha = f.tonicFlash * 0.5;
-      ctx.fillStyle = '#7ee787';
-      ctx.beginPath(); ctx.ellipse(x, y - 56 * s, 42 * s, 66 * s, 0, 0, 7); ctx.fill();
-      ctx.globalAlpha = 1;
+      drawAura(ctx, x, y - 56 * s, 42 * s, 66 * s, '#7ee787', f.tonicFlash * 0.5);
     }
 
     // shadow (skipped for character-select cards, which have no floor)
-    if (!o.noShadow) {
+    if (!o.noShadow && R.quality > 0) {
       ctx.globalAlpha = U.clamp(1 - (GROUND_Y - y) / 260, 0.15, 0.5);
       ctx.fillStyle = '#000';
       ctx.beginPath(); ctx.ellipse(x, GROUND_Y + 2, 26 * s, 6 * s, 0, 0, 7); ctx.fill();
@@ -4253,8 +4504,10 @@ button { font-family: inherit; cursor: pointer; }
     if (!o.noAttach) attachments(ctx, f, joints, angles, s, facing, h, 'back', band);
 
     // back limbs read as depth
-    stroke(ctx, [shoulderB, armB.joint, armB.end], lw * 0.9, backColor);
-    stroke(ctx, [hipB, legB.joint, legB.end], lw, backColor);
+    strokeMany(ctx, [
+      [shoulderB, armB.joint, armB.end],
+      [hipB, legB.joint, legB.end],
+    ], lw * 0.95, backColor);
     if (gear.boots) drawBoot(ctx, legB.end, p.legB[0] + p.legB[1], s, facing, gear.bootTier, backColor);
 
     // torso + armour
@@ -4292,9 +4545,11 @@ button { font-family: inherit; cursor: pointer; }
     ctx.beginPath(); ctx.arc(headC.x + facing * headR * 0.42, headC.y - 1 * s, 1.9 * s, 0, 7); ctx.fill();
 
     // front limbs
-    stroke(ctx, [hipF, legF.joint, legF.end], lw, bodyColor);
+    strokeMany(ctx, [
+      [hipF, legF.joint, legF.end],
+      [shoulderF, armF.joint, armF.end],
+    ], lw * 0.97, bodyColor);
     if (gear.boots) drawBoot(ctx, legF.end, p.legF[0] + p.legF[1], s, facing, gear.bootTier, bodyColor);
-    stroke(ctx, [shoulderF, armF.joint, armF.end], lw * 0.95, bodyColor);
 
     // weapon / gauntlet on the front hand
     if (gear.weaponTier) drawWeapon(ctx, armF.end, p.armF[0] + p.armF[1], s, facing, gear.weaponTier, gear.weaponColor || f.colors.accent);
@@ -4339,6 +4594,31 @@ button { font-family: inherit; cursor: pointer; }
   }
 
 
+  /* Soft glows are cached per colour: a large translucent radial fill is one of
+   * the most expensive things a canvas can be asked to do per frame. */
+  const auraSprites = {};
+  function auraSprite(color) {
+    if (auraSprites[color]) return auraSprites[color];
+    const size = 128;
+    const cv = scratch(size, size);
+    const c = cv.getContext('2d');
+    const g = c.createRadialGradient(size / 2, size / 2, size * 0.1, size / 2, size / 2, size / 2);
+    g.addColorStop(0, hexA(color, 1));
+    g.addColorStop(0.55, hexA(color, 0.55));
+    g.addColorStop(1, hexA(color, 0));
+    c.fillStyle = g;
+    c.fillRect(0, 0, size, size);
+    auraSprites[color] = cv;
+    return cv;
+  }
+
+  function drawAura(ctx, cx, cy, rx, ry, color, alpha) {
+    if (R.quality <= 0 || alpha <= 0.01) return;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(auraSprite(color), cx - rx, cy - ry, rx * 2, ry * 2);
+    ctx.globalAlpha = 1;
+  }
+
   function stroke(ctx, pts, width, color) {
     if (!width || !color) return;
     ctx.strokeStyle = color;
@@ -4346,6 +4626,22 @@ button { font-family: inherit; cursor: pointer; }
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
+  }
+
+  /* Several limb chains in one path. Each separate stroke() carries its own
+   * state change and rasterization pass, and the fighters were spending most
+   * of the frame on op count rather than pixels. */
+  function strokeMany(ctx, chains, width, color) {
+    if (!width || !color) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    for (let c = 0; c < chains.length; c++) {
+      const pts = chains[c];
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    }
     ctx.stroke();
   }
 
@@ -4368,13 +4664,16 @@ button { font-family: inherit; cursor: pointer; }
       ctx.moveTo(9 * s, -5 * s); ctx.lineTo(20 * s, 0); ctx.lineTo(9 * s, 5 * s);
       ctx.closePath(); ctx.fill();
     } else {
-      ctx.shadowColor = color; ctx.shadowBlur = 12;
+      // A shadowBlur here cost more than the rest of the fighter combined; a
+      // drawn outer plate reads the same at this size.
+      ctx.globalAlpha = 0.35;
+      ctx.fillRect(-9 * s, -8 * s, 22 * s, 16 * s);
+      ctx.globalAlpha = 1;
       ctx.fillRect(-6 * s, -5.5 * s, 16 * s, 11 * s);
       ctx.fillStyle = '#fff';
       ctx.beginPath();
       ctx.moveTo(10 * s, -6 * s); ctx.lineTo(26 * s, 0); ctx.lineTo(10 * s, 6 * s);
       ctx.closePath(); ctx.fill();
-      ctx.shadowBlur = 0;
     }
     ctx.restore();
   }
@@ -4488,6 +4787,8 @@ button { font-family: inherit; cursor: pointer; }
   R.updateFx = updateFx;
   R.drawFx = drawFx;
   R.drawBackground = drawBackground;
+  R.drawVignette = drawVignette;
+  R.scratch = scratch;
   R.drawFighter = drawFighter;
   R.drawProjectile = drawProjectile;
   R.poseFor = poseFor;
@@ -4602,7 +4903,7 @@ button { font-family: inherit; cursor: pointer; }
     // ---- centre: floor + timer
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    roundRect(ctx, W / 2 - 62, 16, 124, 56, 10);
+    roundRect(ctx, W / 2 - 62, 16, 124, g.difficulty ? 72 : 56, 10);
     ctx.fill();
     ctx.fillStyle = g.bossInfo.final ? '#ffd76e' : '#fff';
     ctx.font = '900 30px system-ui, sans-serif';
@@ -4610,35 +4911,67 @@ button { font-family: inherit; cursor: pointer; }
     ctx.font = '700 11px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.72)';
     ctx.fillText('FLOOR ' + g.bossInfo.floor + ' / 100', W / 2, 64);
+    if (g.difficulty) {
+      ctx.font = '800 10px system-ui, sans-serif';
+      ctx.fillStyle = g.difficulty.color;
+      ctx.fillText(g.difficulty.name.toUpperCase(), W / 2, 80);
+    }
 
-    // ---- combo counter
+    // ---- combo counter: punches outward on every landed hit
     if (g.comboCount >= 2 && g.comboTimer > 0) {
       const a = U.clamp(g.comboTimer / 0.4, 0, 1);
+      const punch = g.comboPunch || 0;
+      const scale = 1 + punch * 0.34;
+      const tilt = punch * 0.05 * (g.comboCount % 2 ? 1 : -1);
+      const cy = 210;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(58, cy - 14);
+      ctx.rotate(tilt);
+      ctx.scale(scale, scale);
+      ctx.textAlign = 'left';
+      const hot = g.comboCount >= 8 ? '#ff5c7c' : g.comboCount >= 5 ? '#ff9f1c' : '#ffd166';
+      ctx.font = '900 46px system-ui, sans-serif';
+      ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.strokeText(g.comboCount, -18, 14);
+      ctx.fillStyle = hot;
+      ctx.fillText(g.comboCount, -18, 14);
+      const numW = ctx.measureText(String(g.comboCount)).width;
+      ctx.font = '800 18px system-ui, sans-serif';
+      ctx.fillStyle = '#fff';
+      ctx.fillText('HITS', -18 + numW + 12, 10);
+      ctx.restore();
       ctx.globalAlpha = a;
       ctx.textAlign = 'left';
-      const cy = 210;
-      ctx.fillStyle = '#ffd166';
-      ctx.font = '900 46px system-ui, sans-serif';
-      ctx.fillText(g.comboCount, 40, cy);
-      ctx.fillStyle = '#fff';
-      ctx.font = '800 18px system-ui, sans-serif';
-      ctx.fillText('HITS', 40 + ctx.measureText(String(g.comboCount)).width + 26, cy - 4);
       ctx.font = '700 13px system-ui, sans-serif';
       ctx.fillStyle = 'rgba(255,255,255,0.8)';
       ctx.fillText(Math.round(g.comboDamage) + ' DMG', 40, cy + 18);
       ctx.globalAlpha = 1;
     }
 
-    // ---- special name banner
+    // ---- special name banner: slams in, then settles
     if (g.specialBanner && g.specialBannerT > 0) {
-      const a = U.clamp(g.specialBannerT / 0.5, 0, 1);
-      ctx.globalAlpha = a;
+      const life = 1 - U.clamp(g.specialBannerT / 1.4, 0, 1);   // 0 at start
+      const slam = U.clamp(life / 0.16, 0, 1);
+      const fade = U.clamp(g.specialBannerT / 0.4, 0, 1);
+      const pal = g.player && g.player.character ? g.player.character.colors : null;
+      ctx.save();
+      ctx.globalAlpha = fade;
+      ctx.translate(W / 2, 150);
+      ctx.scale(U.lerp(2.1, 1, U.easeOut(slam)), U.lerp(2.1, 1, U.easeOut(slam)));
+      ctx.translate(U.lerp(-90, 0, U.easeOut(slam)), 0);
       ctx.textAlign = 'center';
-      ctx.fillStyle = '#ffd166';
       ctx.font = '900 30px system-ui, sans-serif';
-      ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-      ctx.strokeText(g.specialBanner, W / 2, 150);
-      ctx.fillText(g.specialBanner, W / 2, 150);
+      ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+      ctx.strokeText(g.specialBanner, 0, 0);
+      ctx.fillStyle = pal ? pal.accent : '#ffd166';
+      ctx.fillText(g.specialBanner, 0, 0);
+      // a swipe of colour under the name
+      ctx.globalAlpha = fade * 0.5 * (1 - slam * 0.4);
+      ctx.fillStyle = pal ? pal.aura : '#ff9f1c';
+      const w = ctx.measureText(g.specialBanner).width;
+      ctx.fillRect(-w / 2 - 8, 6, w + 16, 3);
+      ctx.restore();
       ctx.globalAlpha = 1;
     }
 
@@ -4757,6 +5090,7 @@ button { font-family: inherit; cursor: pointer; }
       case 'resume': G.togglePause(); break;
       case 'quit': G.quitFight(); break;
       case 'shopTab': UI.shopTab = arg; UI.show('shop'); break;
+      case 'diff': Progress.setDifficulty(arg); UI.show('tower'); break;
       case 'buy': doBuy(arg); break;
       case 'equip': doEquip(arg); break;
       case 'trainStat': doTrainStat(arg); break;
@@ -4764,6 +5098,16 @@ button { font-family: inherit; cursor: pointer; }
       case 'toggle': doToggle(arg, btn); break;
       case 'rebind': doRebind(arg, btn); break;
       case 'resetKeys': Input.resetBindings(); UI.show('settings'); break;
+      case 'quality': {
+        const G2 = root.ST.Game;
+        G2.settings.quality = arg === 'auto' ? 'auto' : parseInt(arg, 10);
+        G2.saveSettings();
+        // Choosing Auto re-evaluates from the top; the watcher steps down again
+        // by itself if the device still cannot hold frame rate.
+        G2.applyQuality(arg === 'auto' ? 0 : parseInt(arg, 10), false);
+        UI.show('settings');
+        break;
+      }
       case 'wipe': doWipe(); break;
       case 'install': UI.show('install'); break;
       case 'storyGo': {
@@ -4856,6 +5200,7 @@ button { font-family: inherit; cursor: pointer; }
           <span class="stat"><b>${U.comma(d.coins)}</b> <i>coins</i></span>
           <span class="stat"><b>Lv.${d.level}</b> <i>${d.xp}/${xpNeed} xp</i></span>
           <span class="stat"><b>${U.comma(Progress.power())}</b> <i>power</i></span>
+          <span class="stat"><b style="color:${Progress.difficulty().color}">${esc(Progress.difficulty().name)}</b> <i>difficulty</i></span>
         </div>
         <div class="tb-right">
           <button class="chip ${active === 'tower' ? 'on' : ''}" data-ui="tower">TOWER</button>
@@ -4967,6 +5312,9 @@ button { font-family: inherit; cursor: pointer; }
     const myPower = Progress.power();
     let rows = '';
     const Campaign = root.ST.Campaign;
+    const Difficulty = root.ST.Difficulty;
+    const diff = Progress.difficulty();
+    const diffPowerMul = Difficulty.powerMul(diff.id);
     const myRival = root.ST.Characters.get(Campaign.rivalOf(d.character || 'classic'));
     for (let f = 100; f >= 1; f--) {
       const info = Floors.get(f);
@@ -4974,7 +5322,7 @@ button { font-family: inherit; cursor: pointer; }
       const cleared = f <= d.cleared;
       const current = f === d.highest && !cleared;
       const locked = f > d.highest;
-      const ratio = myPower / info.power;
+      const ratio = myPower / (info.power * diffPowerMul);
       // Calibrated against tools/balance.mjs: a player who shops after every
       // win sits around 1.2-1.35, which should read as a fair fight.
       const verdict = ratio > 1.45 ? ['easy', 'FAVOURED']
@@ -4994,6 +5342,8 @@ button { font-family: inherit; cursor: pointer; }
           : esc(info.title) + ' · ' + info.arch + ' · ' + U.comma(info.hp) + ' HP'}</div>
           </div>
           <div class="fl-right">
+            ${!locked && Progress.bestAt(f) >= 0
+        ? `<span class="best" style="--c:${Difficulty.LEVELS[Progress.bestAt(f)].color}">${Difficulty.LEVELS[Progress.bestAt(f)].short}</span>` : ''}
             ${locked ? '<span class="lock">🔒</span>'
         : current ? `<span class="verdict ${verdict[0]}">${verdict[1]}</span><button class="go" data-ui="fight" data-arg="${f}">FIGHT</button>`
           : `<span class="done">✔ CLEARED</span><button class="go ghost" data-ui="train" data-arg="${f}">TRAIN</button>`}
@@ -5023,15 +5373,32 @@ button { font-family: inherit; cursor: pointer; }
           <div class="nc-right">
             <div class="power-cmp">
               <div><span>YOU</span><b>${U.comma(myPower)}</b></div>
-              <div><span>BOSS</span><b>${U.comma(nextInfo.power)}</b></div>
+              <div><span>BOSS</span><b>${U.comma(Math.round(nextInfo.power * diffPowerMul))}</b></div>
             </div>
             <button class="big primary" data-ui="fight" data-arg="${nextInfo.floor}">ENTER FLOOR ${nextInfo.floor}</button>
           </div>
         </div>`;
     return `${topBar('tower')}
       <div class="screen tower">
+        ${difficultyPicker(diff)}
         ${card}
         <div class="floor-list">${rows}</div>
+      </div>`;
+  }
+
+  /* Difficulty applies to the next fight you start, from any entry point. */
+  function difficultyPicker(current) {
+    const Difficulty = root.ST.Difficulty;
+    return `
+      <div class="diff-pick">
+        <div class="diff-head">DIFFICULTY <small>applies to the next floor you enter</small></div>
+        <div class="diff-row">
+          ${Difficulty.LEVELS.map((lv) => `
+            <button class="diff ${lv.id === current.id ? 'on' : ''}" style="--c:${lv.color}"
+              data-ui="diff" data-arg="${lv.id}">${esc(lv.name)}
+              <i>×${lv.reward.toFixed(2)}</i></button>`).join('')}
+        </div>
+        <div class="diff-note">${esc(current.blurb)}</div>
       </div>`;
   }
 
@@ -5199,7 +5566,22 @@ button { font-family: inherit; cursor: pointer; }
         ${toggle('music', 'Music', 'Synth backing track per tier')}
         ${toggle('haptics', 'Vibration', 'Touch button feedback on phones')}
         ${toggle('showHints', 'Combo hints', 'Show a combo reminder at the start of a fight')}
+        ${toggle('showFps', 'Frame rate readout', 'Shows live fps and the resolution being rendered')}
         ${toggle('debug', 'Show hitboxes', 'Developer view of hit and hurt boxes')}
+
+        <h2>Performance <small>the game is limited by how many pixels it paints, so this is the biggest lever</small></h2>
+        <div class="setting">
+          <div><b>Graphics quality</b><span>Auto steps down on its own if your device cannot keep up</span></div>
+        </div>
+        <div class="diff-row quality-row">
+          ${['auto', 0, 1, 2].map((q) => {
+        const label = q === 'auto' ? 'Auto' : root.ST.Game.QUALITY[q].name;
+        const on = String(s.quality) === String(q);
+        return `<button class="diff ${on ? 'on' : ''}" style="--c:#6ea8ff" data-ui="quality" data-arg="${q}">${label}</button>`;
+      }).join('')}
+        </div>
+        <p class="note">Currently rendering at <b>${root.ST.Game.QUALITY[root.ST.Game.qualityLevel].name}</b>.
+          Lower settings paint fewer pixels and simplify the ambient layer; the fighting is identical at every setting.</p>
 
         <h2>Keyboard &amp; controller <small>works on laptop, and on iPhone/iPad with a paired keyboard or controller</small></h2>
         <div class="binds">${binds}</div>
@@ -5270,6 +5652,7 @@ button { font-family: inherit; cursor: pointer; }
         ${r.perfect ? `<div class="rw bonus"><span>PERFECT — no damage taken</span><b>+${U.comma(r.perfect)} ⬤</b></div>` : ''}
         ${r.speed ? `<div class="rw bonus"><span>Fast win</span><b>+${U.comma(r.speed)} ⬤</b></div>` : ''}
         ${r.first ? `<div class="rw bonus"><span>First clear</span><b>+${U.comma(r.first)} ⬤</b></div>` : ''}
+        ${r.diffMul && r.diffMul !== 1 ? `<div class="rw bonus"><span>${esc(p.difficulty.name)} difficulty</span><b>×${r.diffMul.toFixed(2)}</b></div>` : ''}
         ${r.mult > 1 ? `<div class="rw"><span>Charm coin bonus</span><b>×${r.mult.toFixed(2)}</b></div>` : ''}
         <div class="rw total"><span>Total</span><b>+${U.comma(r.coins)} ⬤</b></div>
         <div class="rw"><span>Experience</span><b>+${U.comma(r.xp)} xp</b></div>`;
@@ -5291,7 +5674,8 @@ button { font-family: inherit; cursor: pointer; }
       <div class="screen result ${win ? 'win' : 'lose'}">
         <div class="res-card">
           <div class="res-title">${isFinal ? 'TOWER CONQUERED' : win ? (p.training ? 'TRAINING COMPLETE' : 'FLOOR CLEARED') : 'DEFEATED'}</div>
-          <div class="res-sub">${esc(info.name)} · Floor ${p.floor}</div>
+          <div class="res-sub">${esc(info.name)} · Floor ${p.floor}${p.difficulty
+        ? ` · <b style="color:${p.difficulty.color}">${esc(p.difficulty.name.toUpperCase())}</b>` : ''}</div>
           ${isFinal ? '<p class="note">You climbed all one hundred floors. The Ascendant is beaten. Go again on any floor for coins, or wipe the save and try a cleaner run.</p>' : ''}
           <div class="res-stats">
             <span>Best combo <b>${p.bestCombo}</b></span>
@@ -5433,7 +5817,7 @@ button { font-family: inherit; cursor: pointer; }
     screen: 'title',
     canvas: null, ctx: null,
     dpr: 1, viewScale: 1, viewX: 0, viewY: 0,
-    settings: { haptics: true, sfx: true, music: true, showHints: true, debug: false, touchScale: 1, lefty: false },
+    settings: { haptics: true, sfx: true, music: true, showHints: true, debug: false, quality: 'auto', showFps: false },
     save: null,
     running: false,
     paused: false,
@@ -5450,6 +5834,8 @@ button { font-family: inherit; cursor: pointer; }
     if (s) Object.assign(Game.settings, s);
     Audio.enabled = Game.settings.sfx;
     Audio.setMusic(Game.settings.music);
+    if (Game.settings.quality === undefined) Game.settings.quality = 'auto';
+    Game.applyQuality(Game.settings.quality === 'auto' ? 0 : Game.settings.quality, false);
 
     Input.init(touchLayer);
     Input.onPause = () => {
@@ -5468,11 +5854,52 @@ button { font-family: inherit; cursor: pointer; }
 
   Game.saveSettings = function () { U.storage.write('st.settings.v1', Game.settings); };
 
+  /* Quality tiers. The canvas is fill-rate bound on phones, so the biggest
+   * lever by far is how many pixels we paint: dropping the backing store from
+   * 3x to 2x is a ~45% cut on its own. */
+  const QUALITY = [
+    { name: 'High', dpr: 2.0, detail: 1, fx: 1 },
+    { name: 'Medium', dpr: 1.5, detail: 0.5, fx: 0.7 },
+    { name: 'Low', dpr: 1.15, detail: 0, fx: 0.45 },
+  ];
+  Game.qualityLevel = 0;
+  Game.QUALITY = QUALITY;
+
+  Game.qualityCap = function () { return QUALITY[Game.qualityLevel].dpr; };
+
+  Game.applyQuality = function (level, persist) {
+    Game.qualityLevel = U.clamp(level, 0, QUALITY.length - 1);
+    const q = QUALITY[Game.qualityLevel];
+    R.quality = q.detail;
+    R.fxScale = q.fx;
+    if (persist) { Game.settings.quality = Game.qualityLevel; Game.saveSettings(); }
+    Game.resize();
+  };
+
+  /* Watch real frame times and step down if the device cannot keep up. Only
+   * ever steps down — stepping back up mid-fight causes visible oscillation. */
+  const perf = { samples: [], cooldown: 0 };
+  function watchPerformance(dt) {
+    if (Game.settings.quality !== 'auto') return;
+    if (perf.cooldown > 0) { perf.cooldown -= dt; return; }
+    perf.samples.push(dt);
+    if (perf.samples.length < 120) return;
+    const sorted = perf.samples.slice().sort((a, b) => a - b);
+    const median = sorted[sorted.length >> 1];
+    perf.samples.length = 0;
+    // 22ms median is about 45fps — below that the game stops feeling fluid.
+    if (median > 0.022 && Game.qualityLevel < QUALITY.length - 1) {
+      Game.applyQuality(Game.qualityLevel + 1, false);
+      perf.cooldown = 3;
+    }
+  }
+  Game.perfInfo = () => ({ level: QUALITY[Game.qualityLevel].name, fps: Math.round(1 / Math.max(0.001, Game.smoothDt || 0.016)) });
+
   Game.resize = function () {
     const c = Game.canvas;
     if (!c) return;
     const rect = c.parentElement.getBoundingClientRect();
-    const dpr = Math.min(root.devicePixelRatio || 1, 2.5);
+    const dpr = Math.min(root.devicePixelRatio || 1, Game.qualityCap());
     Game.dpr = dpr;
     c.width = Math.max(1, Math.round(rect.width * dpr));
     c.height = Math.max(1, Math.round(rect.height * dpr));
@@ -5512,6 +5939,9 @@ button { font-family: inherit; cursor: pointer; }
     }
 
     Game.trainingMode = !!o.training;
+    const Difficulty = root.ST.Difficulty;
+    if (o.difficulty) Progress.setDifficulty(o.difficulty);
+    Game.difficulty = Difficulty.get(Progress.data.difficulty);
     let info = Floors.get(floor);
 
     // On a rival floor the Warden is replaced by the fighter you did not pick.
@@ -5562,9 +5992,10 @@ button { font-family: inherit; cursor: pointer; }
       bossStats.rageMul *= rival.stats.rage;
       bossStats.reach = rival.stats.reach;
     }
+    const scaled = Difficulty.scaleBoss(bossStats, Game.difficulty.id);
     const boss = new Fighter({
       name: info.name, x: 660, facing: -1,
-      colors: info.colors, stats: bossStats, scale: info.scale,
+      colors: info.colors, stats: scaled, scale: info.scale,
       character: rival,
       gear: rival ? rivalGearVisual(rival, floor) : bossGearVisual(info),
       specials: [],
@@ -5587,7 +6018,7 @@ button { font-family: inherit; cursor: pointer; }
     Game.player = player;
     Game.boss = boss;
     Game.bossInfo = info;
-    const aiProfile = rival ? rivalProfile(info.ai, rivalId) : info.ai;
+    const aiProfile = Difficulty.scaleAI(rival ? rivalProfile(info.ai, rivalId) : info.ai, Game.difficulty.id);
     Game.ai = new AI(boss, aiProfile, floor);
     if (rival && rival.signature) {
       Game.ai.specials = Game.ai.specials.concat([rival.signature]);
@@ -5597,7 +6028,13 @@ button { font-family: inherit; cursor: pointer; }
     Game.hitstop = 0;
     Game.shake = 0;
     Game.shakeX = 0; Game.shakeY = 0;
+    Game.shakeVec = { x: 0, y: 0 };
     Game.zoom = 1;
+    Game.zoomBoost = 0;
+    Game.zoomBoostDecay = 4;
+    Game.flashT = 0; Game.flashAlpha = 0; Game.flashColor = '#fff';
+    Game.hitSlow = 0; Game.hitSlowFactor = 1;
+    Game.comboPunch = 0;
     Game.projectiles = [];
     Game.comboCount = 0;
     Game.comboDamage = 0;
@@ -5622,7 +6059,11 @@ button { font-family: inherit; cursor: pointer; }
       Game.specialBanner = sp.name.toUpperCase();
       Game.specialBannerT = 1.4;
       Game.specialsUsed++;
-      Game.zoom = 1.12;
+      Game.zoomPunch(sp.ultimate ? 0.12 : 0.07, 0.5);
+      const pal = character.colors;
+      R.FX.ring(player.x, player.y - 55 * player.scale, pal.aura, 10, sp.ultimate ? 130 : 90, 0.3);
+      R.FX.speedLines(player.x, player.y - 55 * player.scale, pal.accent, sp.ultimate ? 14 : 9, 60);
+      if (sp.ultimate) Game.flash(pal.aura, 0.25, 0.2);
       Audio.duck(0.4, 0.8);
     };
 
@@ -5724,16 +6165,40 @@ button { font-family: inherit; cursor: pointer; }
     const raw = Math.min(0.05, (now - Game.last) / 1000);
     Game.last = now;
     Game.frameDt = raw;
+    Game.smoothDt = Game.smoothDt ? Game.smoothDt * 0.9 + raw * 0.1 : raw;
+    watchPerformance(raw);
     Input.update();
 
     if (Game.screen === 'fight' && !Game.paused) {
-      const scale = Game.slowmo > 0 ? 0.32 : 1;
+      let scale = 1;
+      if (Game.slowmo > 0) scale = 0.32;
+      else if (Game.hitSlow > 0) scale = Game.hitSlowFactor;
       Game.update(raw * scale);
       if (Game.slowmo > 0) Game.slowmo -= raw;
+      if (Game.hitSlow > 0) Game.hitSlow -= raw;
+      if (Game.flashT > 0) Game.flashT -= raw;
+      if (Game.zoomBoost > 0) Game.zoomBoost = Math.max(0, Game.zoomBoost - raw * Game.zoomBoostDecay * Game.zoomBoost * 4);
+      if (Game.comboPunch > 0) Game.comboPunch = Math.max(0, Game.comboPunch - raw * 4);
     }
     Game.draw();
+    if (Game.settings.showFps) drawFpsMeter();
     requestAnimationFrame(Game.frame);
   };
+
+  let fpsEl = null, fpsAcc = 0;
+  function drawFpsMeter() {
+    if (!fpsEl) {
+      fpsEl = document.getElementById('fps');
+      if (!fpsEl) return;
+      fpsEl.hidden = false;
+    }
+    fpsAcc += Game.frameDt;
+    if (fpsAcc < 0.25) return;
+    fpsAcc = 0;
+    const info = Game.perfInfo();
+    fpsEl.textContent = info.fps + ' fps · ' + info.level + '\n'
+      + Math.round(Game.canvas.width) + '×' + Math.round(Game.canvas.height);
+  }
 
   Game.update = function (dt) {
     Game.t += dt;
@@ -5874,8 +6339,10 @@ button { font-family: inherit; cursor: pointer; }
 
   function decayShake(dt) {
     Game.shake = Math.max(0, Game.shake - dt * 42);
-    Game.shakeX = (Math.random() - 0.5) * Game.shake;
-    Game.shakeY = (Math.random() - 0.5) * Game.shake * 0.6;
+    const v = Game.shakeVec || { x: 0, y: 0 };
+    // A biased kick plus a little noise reads as a real impact direction.
+    Game.shakeX = (v.x * 0.7 + (Math.random() - 0.5) * 0.6) * Game.shake;
+    Game.shakeY = (v.y * 0.7 + (Math.random() - 0.5) * 0.4) * Game.shake * 0.7;
   }
 
   function pushApart() {
@@ -5895,8 +6362,8 @@ button { font-family: inherit; cursor: pointer; }
   function updateCamera(dt) {
     const p = Game.player, b = Game.boss;
     const d = Math.abs(p.x - b.x);
-    const targetZoom = U.clamp(1.32 - d / 700, 1.0, 1.24);
-    Game.zoom = U.lerp(Game.zoom, targetZoom, dt * 2.4);
+    const targetZoom = U.clamp(1.32 - d / 700, 1.0, 1.24) + (Game.zoomBoost || 0);
+    Game.zoom = U.lerp(Game.zoom, targetZoom, dt * (Game.zoomBoost > 0.01 ? 9 : 2.4));
     const mid = (p.x + b.x) / 2;
     const viewW = R.W / Game.zoom;
     Game.camX = U.clamp(mid, viewW / 2, R.W - viewW / 2);
@@ -6055,8 +6522,11 @@ button { font-family: inherit; cursor: pointer; }
       Game.shake = Math.max(Game.shake, 3);
       if (res.result === 'guardbreak') {
         R.FX.text(cx, cy - 40, 'GUARD BREAK', '#ffd166', 22);
+        R.FX.speedLines(cx, cy, '#ffd166', 12, 56);
         Game.hitstop = 0.14;
-        Game.shake = 14;
+        Game.kick(U.sign(def.x - atk.x) || atk.facing, -0.3, 16);
+        Game.flash('#ffd166', 0.3, 0.18);
+        Game.zoomPunch(0.09, 0.3);
       }
       return;
     }
@@ -6066,25 +6536,41 @@ button { font-family: inherit; cursor: pointer; }
     def.chain = (def.chainTimer > 0 ? def.chain : 0) + 1;
     def.chainTimer = 1.1;
 
-    const acc = atk.character ? atk.character.colors.accent : '#fff3b0';
-    const trim = atk.character ? atk.character.colors.trim : '#ffffff';
-    if (d.special && atk.character) {
-      // Sparks run along the punch vector rather than bursting in a ball.
-      R.FX.shards(cx, cy, atk.facing > 0 ? -0.35 : Math.PI + 0.35, heavy ? 8 : 6, acc, 0.9, heavy ? 340 : 240);
-    } else {
-      R.FX.spark(cx, cy, heavy ? 14 : 8, res.crit ? '#ffd166' : acc, heavy ? 280 : 180);
-    }
-    R.FX.ring(cx, cy, res.crit ? '#ffd166' : trim, 4, heavy ? 60 : 36, 0.2);
-    if (d.shock) R.FX.shock(cx, cy, acc);
-    atk.partFlash = 0.034;   // two frames — the sheet's forearm-wrap flash
+    const pal = atk.character ? atk.character.colors
+      : { accent: '#fff3b0', trim: '#ffffff', aura: '#ffd166' };
+    const dirX = U.sign(def.x - atk.x) || atk.facing;
 
-    Game.hitstop = Math.max(Game.hitstop, heavy ? 0.085 : 0.045);
-    Game.shake = Math.max(Game.shake, heavy ? 12 : 6);
+    // Is this the blow that ends a combo? That one gets the full treatment.
+    const isFinisher = !!(d.special && atk.special
+      && h.key === atk.special.hits.length - 1 && atk.special.hits.length > 1);
+
+    if (isFinisher) {
+      finisher(atk, def, cx, cy, pal);
+    } else {
+      if (d.special && atk.character) {
+        // Sparks run along the punch vector rather than bursting in a ball.
+        R.FX.shards(cx, cy, atk.facing > 0 ? -0.35 : Math.PI + 0.35, heavy ? 8 : 6, pal.accent, 0.9, heavy ? 340 : 240);
+      } else {
+        R.FX.spark(cx, cy, heavy ? 14 : 8, res.crit ? '#ffd166' : pal.accent, heavy ? 280 : 180);
+      }
+      R.FX.ring(cx, cy, res.crit ? '#ffd166' : pal.trim, 4, heavy ? 60 : 36, 0.2);
+      Game.hitstop = Math.max(Game.hitstop, heavy ? 0.085 : 0.045);
+      Game.kick(dirX, -0.2, heavy ? 13 : 6);
+      if (heavy) Game.zoomPunch(0.045, 0.2);
+      if (res.crit) {
+        R.FX.impactFrame(def, '#ffffff', 0.07);
+        R.FX.speedLines(cx, cy, '#ffd166', 9, 46);
+        Game.flash('#ffd166', 0.16, 0.12);
+      }
+    }
+    if (d.shock) R.FX.shock(cx, cy, pal.accent);
+    atk.partFlash = 0.034;   // two frames — the sheet's forearm-wrap flash
 
     if (atk === Game.player) {
       Game.comboCount = def.chain;
       Game.comboDamage += res.dmg;
       Game.comboTimer = 1.4;
+      Game.comboPunch = 1;
       if (def.chain > Game.bestCombo) Game.bestCombo = def.chain;
       R.FX.text(cx, cy - 30, (res.crit ? 'CRIT ' : '') + Math.round(res.dmg), res.crit ? '#ffd166' : '#ffffff', res.crit ? 24 : 18);
     } else {
@@ -6095,6 +6581,48 @@ button { font-family: inherit; cursor: pointer; }
   }
 
   // ------------------------------------------------------------- match end
+  // ------------------------------------------------------------- cinematics
+  /* A short zoom-in on impact. Reads as the camera flinching with the punch. */
+  Game.zoomPunch = function (amount, seconds) {
+    Game.zoomBoost = Math.max(Game.zoomBoost || 0, amount);
+    Game.zoomBoostDecay = 1 / (seconds || 0.25);
+  };
+
+  /* Directional camera kick — a hit from the left throws the frame right. */
+  Game.kick = function (dirX, dirY, amount) {
+    Game.shake = Math.max(Game.shake, amount);
+    Game.shakeVec = { x: dirX, y: dirY };
+  };
+
+  /* Full-screen colour wash. */
+  Game.flash = function (color, alpha, seconds) {
+    Game.flashColor = color;
+    Game.flashAlpha = alpha;
+    Game.flashT = seconds;
+    Game.flashMax = seconds;
+  };
+
+  /* Brief slow motion, independent of the match-end slowdown. */
+  Game.slowTime = function (factor, seconds) {
+    Game.hitSlowFactor = factor;
+    Game.hitSlow = Math.max(Game.hitSlow || 0, seconds);
+  };
+
+  /* Everything at once, for the last hit of a combo. */
+  function finisher(atk, def, cx, cy, colors) {
+    Game.hitstop = Math.max(Game.hitstop, 0.16);
+    Game.zoomPunch(0.16, 0.45);
+    Game.kick(U.sign(def.x - atk.x), -0.4, 20);
+    Game.flash(colors.trim, 0.42, 0.22);
+    Game.slowTime(0.35, 0.26);
+    R.FX.impactFrame(def, '#ffffff', 0.10);
+    R.FX.speedLines(cx, cy, colors.accent, 16, 70);
+    R.FX.ring(cx, cy, colors.trim, 6, 120, 0.3);
+    R.FX.ring(cx, cy, colors.aura, 4, 80, 0.22);
+    R.FX.shards(cx, cy, atk.facing > 0 ? -0.35 : Math.PI + 0.35, 14, colors.accent, 1.1, 460);
+    Audio.duck(0.35, 0.5);
+  }
+
   Game.setAnnounce = function (text, sub, seconds, color) {
     Game.announce = text;
     Game.announceSub = sub || null;
@@ -6128,7 +6656,7 @@ button { font-family: inherit; cursor: pointer; }
 
     let payload;
     if (Game.trainingMode) {
-      const reward = Progress.rewardFor(info.floor, { perfect, fast, first: false });
+      const reward = Progress.rewardFor(info.floor, { perfect, fast, first: false, difficulty: Game.difficulty.id });
       const coins = Math.round(reward.coins * 0.4);
       if (Game.result === 'win') {
         Progress.data.coins += coins;
@@ -6138,18 +6666,18 @@ button { font-family: inherit; cursor: pointer; }
       }
       payload = { training: true, result: Game.result, coins: Game.result === 'win' ? coins : 0, xp: 0, levels: [], perfect, fast, first: false, floor: info.floor, bestCombo: Game.bestCombo };
     } else if (Game.result === 'win') {
-      const reward = Progress.rewardFor(info.floor, { perfect, fast, first });
+      const reward = Progress.rewardFor(info.floor, { perfect, fast, first, difficulty: Game.difficulty.id });
       const levels = Progress.recordWin(info.floor, reward, { perfect, bestCombo: Game.bestCombo });
-      payload = { result: 'win', reward, levels, perfect, fast, first, floor: info.floor, bestCombo: Game.bestCombo };
+      payload = { result: 'win', reward, levels, perfect, fast, first, floor: info.floor, bestCombo: Game.bestCombo, difficulty: Game.difficulty };
       Audio.play(info.floor % 10 === 0 ? 'floorUp' : 'coin');
       if (levels.length) setTimeout(() => Audio.play('levelUp'), 400);
     } else {
       Progress.recordLoss();
-      const consolation = Math.round((40 + info.floor * 6) * Progress.combat().coinMul);
+      const consolation = Math.round((40 + info.floor * 6) * Progress.combat().coinMul * Game.difficulty.reward);
       Progress.data.coins += consolation;
       Progress.data.stats.coinsEarned += consolation;
       Progress.save();
-      payload = { result: 'lose', coins: consolation, floor: info.floor, bestCombo: Game.bestCombo };
+      payload = { result: 'lose', coins: consolation, floor: info.floor, bestCombo: Game.bestCombo, difficulty: Game.difficulty };
     }
     Game.screen = 'result';
     Input.releaseAll();
@@ -6240,12 +6768,14 @@ button { font-family: inherit; cursor: pointer; }
 
     ctx.restore();
 
-    // vignette
-    const vg = ctx.createRadialGradient(R.W / 2, R.H / 2, R.H * 0.35, R.W / 2, R.H / 2, R.H * 0.95);
-    vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, 'rgba(0,0,0,0.55)');
-    ctx.fillStyle = vg;
-    ctx.fillRect(0, 0, R.W, R.H);
+    R.drawVignette(ctx);
+
+    if (Game.flashT > 0) {
+      ctx.globalAlpha = Game.flashAlpha * (Game.flashT / Game.flashMax);
+      ctx.fillStyle = Game.flashColor;
+      ctx.fillRect(0, 0, R.W, R.H);
+      ctx.globalAlpha = 1;
+    }
 
     HUD.draw(ctx, Game);
 

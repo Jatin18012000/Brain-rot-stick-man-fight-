@@ -144,7 +144,81 @@ Beats are cards shown before and after those fights, and the rival card doubles
 as the versus screen — which is what the commissioned portraits were drawn for.
 Nothing in the campaign touches the fighting.
 
-## How the fighting works## How the fighting works
+## Difficulty
+
+Pick a level before you enter any floor, from the sticky bar on the tower map.
+It changes what the boss is made of and how sharply it thinks — never your own
+stats, your gear, or the frame data. A harder floor is a harder opponent, not a
+nerfed player. The tower's power rating and the fight HUD both show the level
+you are on, and each floor remembers the hardest level you have cleared it at.
+
+| Level | Boss health | Boss damage | Reacts in | Pays |
+| --- | --- | --- | --- | --- |
+| **Casual** | ×0.70 | ×0.70 | 1.55× slower | ×0.70 |
+| **Standard** | ×1.00 | ×1.00 | as designed | ×1.00 |
+| **Hard** | ×1.35 | ×1.25 | 0.72× | ×1.55 |
+| **Brutal** | ×1.80 | ×1.55 | 0.52× | ×2.30 |
+
+`node tools/balance.mjs --diff=all` simulates the full climb at every level.
+All four clear; Brutal's floor 100 is knife-edge in the damage model, which is
+the point of it — drop to Hard for that one floor if you need to.
+
+## Performance
+
+The game is fill-rate bound, not CPU bound: the JavaScript costs about half a
+millisecond a frame, and everything else is how many pixels get painted. Under
+an 8× CPU throttle at phone resolution it went from **9.4 fps to 48 fps**:
+
+- The arena is baked to an offscreen canvas once per tier and blitted. Sky
+  gradient, silhouettes, ground, perspective lines and the accent strip were
+  being redrawn from scratch every frame.
+- The full-screen vignette is cached rather than evaluated per pixel per frame.
+- `backdrop-filter` is gone from the touch buttons. Nine blurred regions
+  composited over an animating canvas is brutal on iOS.
+- Soft glows are cached sprites; large translucent radial fills were among the
+  most expensive single operations in the draw.
+- The backing store is capped, and **quality steps down automatically** if the
+  device cannot hold frame rate. Settings has a manual override and a live fps
+  readout. The fighting is identical at every setting.
+
+## How the fighting works## Difficulty
+
+Pick a level before you enter any floor, from the sticky bar on the tower map.
+It changes what the boss is made of and how sharply it thinks — never your own
+stats, your gear, or the frame data. A harder floor is a harder opponent, not a
+nerfed player. The tower's power rating and the fight HUD both show the level
+you are on, and each floor remembers the hardest level you have cleared it at.
+
+| Level | Boss health | Boss damage | Reacts in | Pays |
+| --- | --- | --- | --- | --- |
+| **Casual** | ×0.70 | ×0.70 | 1.55× slower | ×0.70 |
+| **Standard** | ×1.00 | ×1.00 | as designed | ×1.00 |
+| **Hard** | ×1.35 | ×1.25 | 0.72× | ×1.55 |
+| **Brutal** | ×1.80 | ×1.55 | 0.52× | ×2.30 |
+
+`node tools/balance.mjs --diff=all` simulates the full climb at every level.
+All four clear; Brutal's floor 100 is knife-edge in the damage model, which is
+the point of it — drop to Hard for that one floor if you need to.
+
+## Performance
+
+The game is fill-rate bound, not CPU bound: the JavaScript costs about half a
+millisecond a frame, and everything else is how many pixels get painted. Under
+an 8× CPU throttle at phone resolution it went from **9.4 fps to 48 fps**:
+
+- The arena is baked to an offscreen canvas once per tier and blitted. Sky
+  gradient, silhouettes, ground, perspective lines and the accent strip were
+  being redrawn from scratch every frame.
+- The full-screen vignette is cached rather than evaluated per pixel per frame.
+- `backdrop-filter` is gone from the touch buttons. Nine blurred regions
+  composited over an animating canvas is brutal on iOS.
+- Soft glows are cached sprites; large translucent radial fills were among the
+  most expensive single operations in the draw.
+- The backing store is capped, and **quality steps down automatically** if the
+  device cannot hold frame rate. Settings has a manual override and a live fps
+  readout. The fighting is identical at every setting.
+
+## How the fighting works
 
 Standard fighting-game rules, kept honest: every attack has **startup**,
 **active** and **recovery** frames, and the boss is bound by exactly the same
@@ -159,6 +233,13 @@ frame data, blocking and rage meter that you are.
 - **Rage** builds as you deal and take damage. Most combos cost rage; the
   ultimate costs a lot of it.
 - **Damage scales down** through a long combo, so nothing is an infinite.
+- **Combos finish loudly.** The last hit of a string gets the full treatment:
+  frame freeze, a camera zoom-punch and a directional kick, a colour wash in
+  the fighter's own palette, a white impact silhouette of whoever just got hit,
+  radial speed lines, and a beat of slow motion. Lesser hits get a scaled-down
+  share of the same, and criticals get their own flash. The combo counter
+  punches outward on every landed hit and runs gold → orange → red as the
+  string grows.
 
 ### The combo list
 
@@ -227,6 +308,7 @@ src/input.js            touch + keyboard + gamepad -> one action set
 src/moves.js            frame data and combo recipes
 src/characters.js       playable characters: palette, build, soft parts
 src/campaign.js         story beats and rival encounters
+src/difficulty.js       per-floor difficulty levels
 src/floors.js           the 100 bosses
 src/progress.js         save data, shop catalogue, economy
 src/fighter.js          physics, state machine, hit/hurt boxes
@@ -246,7 +328,8 @@ runs straight off the filesystem.
 ```bash
 node tools/check-combos.mjs        # prove every combo is performable
 node tools/balance.mjs --all       # simulate the 100-floor economy
-node tools/balance.mjs --char=blaze  # ...for one character
+node tools/balance.mjs --char=raza   # ...for one character
+node tools/balance.mjs --diff=all    # ...at every difficulty
 node tools/build-standalone.mjs    # -> dist/stickman-tower.html
 python3 tools/make-icons.py        # regenerate the app icons
 ```

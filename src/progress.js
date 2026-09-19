@@ -100,6 +100,8 @@
     return {
       v: 1,
       character: null,        // chosen on first play
+      difficulty: 'standard', // chosen per floor, remembered between fights
+      floorBest: {},          // floor -> hardest difficulty cleared there
       floor: 1,
       highest: 1,
       cleared: 0,
@@ -127,6 +129,8 @@
         P.data.train = Object.assign(fresh.train, saved.train || {});
         P.data.equipped = Object.assign(fresh.equipped, saved.equipped || {});
         P.data.stats = Object.assign(fresh.stats, saved.stats || {});
+        P.data.floorBest = Object.assign(fresh.floorBest, saved.floorBest || {});
+        if (!P.data.difficulty) P.data.difficulty = 'standard';
       }
       return P.data;
     },
@@ -217,6 +221,17 @@
 
     character() { return root.ST.Characters.get(P.data.character); },
 
+    difficulty() { return root.ST.Difficulty.get(P.data.difficulty); },
+    setDifficulty(id) {
+      P.data.difficulty = root.ST.Difficulty.get(id).id;
+      P.save();
+    },
+    /* Hardest level this floor has been cleared at, or -1. */
+    bestAt(floor) {
+      const id = P.data.floorBest[floor];
+      return id === undefined ? -1 : root.ST.Difficulty.get(id).index;
+    },
+
     /* Average equipped tier, which decides which gear look a character wears. */
     gearTier() {
       let sum = 0, n = 0;
@@ -287,18 +302,21 @@
     rewardFor(floor, opts) {
       const o = opts || {};
       const boss = root.ST.Floors.get(floor);
-      const base = Math.round((90 + 26 * floor) * (boss.warden ? 2.4 : 1) * (boss.final ? 4 : 1));
+      const diffMul = root.ST.Difficulty.rewardMul(o.difficulty || P.data.difficulty);
+      const base = Math.round((90 + 26 * floor) * (boss.warden ? 2.4 : 1) * (boss.final ? 4 : 1) * diffMul);
       const perfect = o.perfect ? Math.round(base * 0.5) : 0;
       const speed = o.fast ? Math.round(base * 0.25) : 0;
       const first = o.first ? Math.round(base * 0.35) : 0;
       const mult = P.combat().coinMul;
       const coins = Math.round((base + perfect + speed + first) * mult);
-      const xp = Math.round((40 + 14 * floor) * (boss.warden ? 2 : 1) * (boss.final ? 3 : 1));
-      return { base, perfect, speed, first, coins, xp, mult };
+      const xp = Math.round((40 + 14 * floor) * (boss.warden ? 2 : 1) * (boss.final ? 3 : 1) * diffMul);
+      return { base, perfect, speed, first, coins, xp, mult, diffMul };
     },
 
     recordWin(floor, reward, extra) {
       const d = P.data;
+      const lvl = root.ST.Difficulty.get(d.difficulty);
+      if (P.bestAt(floor) < lvl.index) d.floorBest[floor] = lvl.id;
       d.coins += reward.coins;
       d.stats.coinsEarned += reward.coins;
       d.stats.wins++;

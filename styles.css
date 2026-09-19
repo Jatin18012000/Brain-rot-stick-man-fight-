@@ -35,13 +35,18 @@ html, body {
 /* 100vh (not dvh/%) is the one that behaves from a cold start on iOS. */
 #app { position: fixed; inset: 0; height: 100vh; width: 100vw; }
 #stage { position: relative; width: 100%; height: 100%; overflow: hidden; }
-canvas#game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+canvas#game {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  transform: translateZ(0);
+  contain: strict;
+}
 
 .hidden { display: none !important; }
 
 /* ------------------------------------------------------------- touch pad */
 .touch {
   position: absolute; inset: 0; z-index: 20; touch-action: none;
+  transform: translateZ(0);
   --bs: clamp(50px, 11vh, 82px);
 }
 
@@ -59,9 +64,7 @@ canvas#game { position: absolute; inset: 0; width: 100%; height: 100%; display: 
 .pb, .ab {
   -webkit-appearance: none; appearance: none;
   border: 2px solid rgba(255, 255, 255, 0.28);
-  background: rgba(18, 24, 40, 0.5);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(18, 24, 40, 0.62);
   color: #fff;
   border-radius: 50%;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -117,7 +120,7 @@ canvas#game { position: absolute; inset: 0; width: 100%; height: 100%; display: 
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  top: calc(var(--view-y, 0px) + 78px * var(--view-s, 1));
+  top: calc(var(--view-y, 0px) + 96px * var(--view-s, 1));
   width: clamp(34px, 5vh, 42px); height: clamp(30px, 4vh, 34px);
   border-radius: 10px;
   border: 1px solid var(--line);
@@ -166,7 +169,6 @@ button { font-family: inherit; cursor: pointer; }
   background: var(--panel); border: 1px solid var(--line);
   border-radius: 12px; padding: 8px 10px; margin-bottom: 4px;
   position: sticky; top: 0; z-index: 5;
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
 .tb-left, .tb-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .stat { font-size: 12px; color: var(--dim); }
@@ -445,3 +447,37 @@ button { font-family: inherit; cursor: pointer; }
 .cs-quote { font-size: 13px; font-style: italic; color: var(--text); margin: 2px 0 0; line-height: 1.4; }
 .cs-portrait { height: auto; aspect-ratio: 240 / 260; }
 .fl-name em.rival { background: var(--gold); color: #1a1200; }
+
+/* fps readout, off by default */
+#fps {
+  position: absolute; z-index: 45; pointer-events: none;
+  left: calc(8px + var(--safe-l)); top: calc(6px + var(--safe-t));
+  font: 700 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #7ee787; background: rgba(0,0,0,.45); padding: 3px 7px; border-radius: 5px;
+  white-space: pre;
+}
+
+/* ------------------------------------------------------------- difficulty */
+.diff-pick {
+  margin: 0 0 12px; padding: 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  position: sticky; top: 52px; z-index: 4;
+}
+.diff-head { font-size: 9px; letter-spacing: .2em; font-weight: 900; color: var(--dim); margin-bottom: 8px; }
+.diff-head small { font-weight: 500; letter-spacing: 0; margin-left: 8px; text-transform: none; }
+.diff-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.diff {
+  padding: 8px 4px; border-radius: 8px; font-size: 10px; font-weight: 900;
+  letter-spacing: .06em; background: rgba(255,255,255,.06);
+  border: 1px solid var(--line); color: var(--dim);
+  display: flex; flex-direction: column; gap: 3px; align-items: center;
+}
+.diff i { font-style: normal; font-size: 9px; opacity: .75; font-weight: 700; }
+.diff.on { background: var(--c); border-color: var(--c); color: #0b0f1a; }
+.diff-note { font-size: 10.5px; color: var(--dim); line-height: 1.45; margin-top: 6px; }
+.diff-note b { white-space: nowrap; }
+.best {
+  font-size: 8px; font-weight: 900; letter-spacing: .1em; padding: 3px 5px;
+  border-radius: 4px; border: 1px solid var(--c); color: var(--c);
+}
+.quality-row { margin-bottom: 8px; }
