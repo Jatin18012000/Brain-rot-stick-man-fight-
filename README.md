@@ -19,13 +19,39 @@ installs to the home screen and runs offline.
 3. Launch it from the icon. It runs full screen with no browser chrome, and
    works with no signal once installed.
 
-**Laptop / desktop**
+**Mac**
+
+Three ways, easiest first:
+
+1. **Just open the URL** in Safari or Chrome and install it to your Dock —
+   Safari: **File → Add to Dock**. Chrome or Edge: the **Install** icon in the
+   address bar. It then launches like any other app.
+2. **Clone and double-click.** `git clone` the repo, then double-click
+   **`Play on Mac.command`** in Finder. It finds a free port, serves the folder
+   and opens your browser; leave the Terminal window it opens running while you
+   play, and press Ctrl-C there when you're done. Serving the folder (rather
+   than opening the file directly) is what gives you the installable app and
+   offline play.
+3. **One file, no setup.** Download
+   **[`dist/stickman-tower.html`](dist/stickman-tower.html)** and double-click
+   it. The entire game — code, styles, icon, every sound — is in that one file.
+   Saves work; it just can't install to the Dock or run a service worker.
+
+If you downloaded a ZIP rather than cloning, macOS quarantines the launcher:
+right-click **`Play on Mac.command`** → **Open** the first time, or run
+`xattr -d com.apple.quarantine "Play on Mac.command"`.
+
+**Windows / Linux**
 
 - Chrome or Edge: open the URL and click **Install** in the address bar.
-- Safari: **File → Add to Dock**.
 - Or download **[`dist/stickman-tower.html`](dist/stickman-tower.html)** and
-  double-click it. The entire game — code, styles, icon, every sound — is that
-  one file. Nothing else to install.
+  open it. One file, nothing to install.
+
+**Playing on a laptop**
+
+Arrows or `WASD` to move, `J` / `K` / `L` for punch, punch, kick, `Shift` to
+block, `Q` for a tonic, `Esc` to pause. Every key is remappable in Settings, and
+a plugged-in controller is picked up automatically.
 
 **Publish it so your phone can reach it**
 
@@ -298,6 +324,7 @@ to keep that promise honest.
 ## Project layout
 
 ```
+Play on Mac.command     double-click launcher for macOS
 index.html              shell, meta tags, boot
 styles.css              layout and UI skin (safe-area aware)
 manifest.webmanifest    PWA manifest
